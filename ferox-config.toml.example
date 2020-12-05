@@ -18,7 +18,9 @@
 # verbosity = 1
 # scan_limit = 6
 # quiet = true
+# json = true
 # output = "/targets/ellingson_mineral_company/gibson.txt"
+# debug_log = "/var/log/find-the-derp.log"
 # user_agent = "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
 # redirects = true
 # insecure = true
@@ -30,9 +32,11 @@
 # extract_links = true
 # depth = 1
 # filter_size = [5174]
+# filter_regex = ["^ignore me$"]
 # filter_word_count = [993]
 # filter_line_count = [35, 36]
 # queries = [["name","value"], ["rick", "astley"]]
+# save_state = false
 
 # headers can be specified on multiple lines or as an inline table
 #

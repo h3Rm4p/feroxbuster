@@ -1,15 +1,18 @@
 use crossterm::event::{self, Event, KeyCode};
+use feroxbuster::progress::add_bar;
 use feroxbuster::{
     banner,
     config::{CONFIGURATION, PROGRESS_BAR, PROGRESS_PRINTER},
     heuristics, logger, reporter,
-    scanner::{scan_url, PAUSE_SCAN},
+    scan_manager::{self, PAUSE_SCAN},
+    scanner::{self, scan_url, RESPONSES, SCANNED_URLS},
     utils::{ferox_print, get_current_depth, module_colorizer, status_colorizer},
-    FeroxError, FeroxResponse, FeroxResult, SLEEP_DURATION, VERSION,
+    FeroxError, FeroxResponse, FeroxResult, FeroxSerialize, SLEEP_DURATION, VERSION,
 };
 #[cfg(not(target_os = "windows"))]
 use feroxbuster::{utils::set_open_file_limit, DEFAULT_OPEN_FILE_LIMIT};
 use futures::StreamExt;
+use std::convert::TryInto;
 use std::{
     collections::HashSet,
     fs::File,
@@ -96,7 +99,7 @@ fn get_unique_words_from_wordlist(path: &str) -> FeroxResult<Arc<HashSet<String>
 async fn scan(
     targets: Vec<String>,
     tx_term: UnboundedSender<FeroxResponse>,
-    tx_file: UnboundedSender<String>,
+    tx_file: UnboundedSender<FeroxResponse>,
 ) -> FeroxResult<()> {
     log::trace!("enter: scan({:?}, {:?}, {:?})", targets, tx_term, tx_file);
     // cloning an Arc is cheap (it's basically a pointer into the heap)
@@ -110,6 +113,33 @@ async fn scan(
         let mut err = FeroxError::default();
         err.message = format!("Did not find any words in {}", CONFIGURATION.wordlist);
         return Err(Box::new(err));
+    }
+
+    scanner::initialize(words.len(), &CONFIGURATION);
+
+    if CONFIGURATION.resumed {
+        if let Ok(scans) = SCANNED_URLS.scans.lock() {
+            for scan in scans.iter() {
+                if let Ok(locked_scan) = scan.lock() {
+                    if locked_scan.complete {
+                        // these scans are complete, and just need to be shown to the user
+                        let pb = add_bar(
+                            &locked_scan.url,
+                            words.len().try_into().unwrap_or_default(),
+                            false,
+                            true,
+                        );
+                        pb.finish();
+                    }
+                }
+            }
+        }
+
+        if let Ok(responses) = RESPONSES.responses.read() {
+            for response in responses.iter() {
+                PROGRESS_PRINTER.println(response.as_str());
+            }
+        }
     }
 
     let mut tasks = vec![];
@@ -149,6 +179,22 @@ async fn get_targets() -> FeroxResult<Vec<String>> {
         while let Some(line) = reader.next().await {
             targets.push(line?);
         }
+    } else if CONFIGURATION.resumed {
+        // resume-from can't be used with any other flag, making it mutually exclusive from either
+        // of the other two options
+        if let Ok(scans) = SCANNED_URLS.scans.lock() {
+            for scan in scans.iter() {
+                // SCANNED_URLS gets deserialized scans added to it at program start if --resume-from
+                // is used, so scans that aren't marked complete still need to be scanned
+                if let Ok(locked_scan) = scan.lock() {
+                    if locked_scan.complete {
+                        // this one's already done, ignore it
+                        continue;
+                    }
+                    targets.push(locked_scan.url.to_owned());
+                }
+            }
+        }
     } else {
         targets.push(CONFIGURATION.target_url.clone());
     }
@@ -176,7 +222,6 @@ async fn wrapped_main() {
 
     // can't trace main until after logger is initialized and the above task is started
     log::trace!("enter: main");
-    log::debug!("{:#?}", *CONFIGURATION);
 
     // spawn a thread that listens for keyboard input on stdin, when a user presses enter
     // the input handler will toggle PAUSE_SCAN, which in turn is used to pause and resume
@@ -238,12 +283,12 @@ async fn wrapped_main() {
 async fn clean_up(
     tx_term: UnboundedSender<FeroxResponse>,
     term_handle: JoinHandle<()>,
-    tx_file: UnboundedSender<String>,
+    tx_file: UnboundedSender<FeroxResponse>,
     file_handle: Option<JoinHandle<()>>,
     save_output: bool,
 ) {
     log::trace!(
-        "enter: clean_up({:?}, {:?}, {:?}, {:?}, {}",
+        "enter: clean_up({:?}, {:?}, {:?}, {:?}, {})",
         tx_term,
         term_handle,
         tx_file,
@@ -295,6 +340,11 @@ async fn clean_up(
 fn main() {
     // setup logging based on the number of -v's used
     logger::initialize(CONFIGURATION.verbosity);
+
+    if CONFIGURATION.save_state {
+        // start the ctrl+c handler
+        scan_manager::initialize();
+    }
 
     // this function uses rlimit, which is not supported on windows
     #[cfg(not(target_os = "windows"))]

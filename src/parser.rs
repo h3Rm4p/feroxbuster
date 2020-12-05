@@ -1,10 +1,9 @@
-use crate::VERSION;
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 
 /// Create and return an instance of [clap::App](https://docs.rs/clap/latest/clap/struct.App.html), i.e. the Command Line Interface's configuration
 pub fn initialize() -> App<'static, 'static> {
     App::new("feroxbuster")
-        .version(VERSION)
+        .version(env!("CARGO_PKG_VERSION"))
         .author("Ben 'epi' Risher (@epi052)")
         .about("A fast, simple, recursive content discovery tool written in Rust")
         .arg(
@@ -19,7 +18,7 @@ pub fn initialize() -> App<'static, 'static> {
             Arg::with_name("url")
                 .short("u")
                 .long("url")
-                .required_unless("stdin")
+                .required_unless_one(&["stdin", "resume_from"])
                 .value_name("URL")
                 .multiple(true)
                 .use_delimiter(true)
@@ -110,6 +109,13 @@ pub fn initialize() -> App<'static, 'static> {
                 .help("Only print URLs; Don't print status codes, response size, running config, etc...")
         )
         .arg(
+            Arg::with_name("json")
+                .long("json")
+                .takes_value(false)
+                .requires("output_files")
+                .help("Emit JSON logs to --output and --debug-log instead of normal text")
+        )
+        .arg(
             Arg::with_name("dont_filter")
                 .short("D")
                 .long("dont-filter")
@@ -121,7 +127,22 @@ pub fn initialize() -> App<'static, 'static> {
                 .short("o")
                 .long("output")
                 .value_name("FILE")
-                .help("Output file to write results to (default: stdout)")
+                .help("Output file to write results to (use w/ --json for JSON entries)")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("resume_from")
+                .long("resume-from")
+                .value_name("STATE_FILE")
+                .help("State file from which to resume a partially complete scan (ex. --resume-from ferox-1606586780.state)")
+                .conflicts_with_all(&["wordlist", "url", "threads", "depth", "timeout", "verbosity", "proxy", "replay_proxy", "replay_codes", "status_codes", "quiet", "json", "dont_filter", "output", "debug_log", "user_agent", "redirects", "insecure", "extensions", "headers", "queries", "no_recursion", "add_slash", "stdin", "filter_size", "filter_regex", "filter_words", "filter_lines", "filter_status", "extract_links", "scan_limit"])
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("debug_log")
+                .long("debug-log")
+                .value_name("FILE")
+                .help("Output file to write log entries (use w/ --json for JSON entries)")
                 .takes_value(true),
         )
         .arg(
@@ -219,6 +240,18 @@ pub fn initialize() -> App<'static, 'static> {
                 ),
         )
         .arg(
+            Arg::with_name("filter_regex")
+                .short("X")
+                .long("filter-regex")
+                .value_name("REGEX")
+                .takes_value(true)
+                .multiple(true)
+                .use_delimiter(true)
+                .help(
+                    "Filter out messages via regular expression matching on the response's body (ex: -X '^ignore me$')",
+                ),
+        )
+        .arg(
             Arg::with_name("filter_words")
                 .short("W")
                 .long("filter-words")
@@ -268,6 +301,10 @@ pub fn initialize() -> App<'static, 'static> {
                 .value_name("SCAN_LIMIT")
                 .takes_value(true)
                 .help("Limit total number of concurrent scans (default: 0, i.e. no limit)")
+        )
+        .group(ArgGroup::with_name("output_files")
+            .args(&["debug_log", "output"])
+            .multiple(true)
         )
         .after_help(r#"NOTE:
     Options that take multiple values are very flexible.  Consider the following ways of specifying

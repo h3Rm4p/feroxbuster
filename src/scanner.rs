@@ -1,25 +1,29 @@
 use crate::{
-    config::CONFIGURATION,
+    config::{Configuration, CONFIGURATION},
     extractor::get_links,
-    filters::{FeroxFilter, StatusCodeFilter, WildcardFilter},
-    heuristics, progress,
+    filters::{
+        FeroxFilter, LinesFilter, RegexFilter, SizeFilter, StatusCodeFilter, WildcardFilter,
+        WordsFilter,
+    },
+    heuristics,
+    scan_manager::{FeroxResponses, FeroxScans, PAUSE_SCAN},
     utils::{format_url, get_current_depth, make_request},
-    FeroxChannel, FeroxResponse, SLEEP_DURATION,
+    FeroxChannel, FeroxResponse,
 };
-use console::style;
 use futures::{
     future::{BoxFuture, FutureExt},
     stream, StreamExt,
 };
-use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
+use regex::Regex;
 use reqwest::Url;
+#[cfg(not(test))]
+use std::process::exit;
 use std::{
     collections::HashSet,
     convert::TryInto,
-    io::{stderr, Write},
     ops::Deref,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     sync::{Arc, RwLock},
 };
 use tokio::{
@@ -28,122 +32,26 @@ use tokio::{
         Semaphore,
     },
     task::JoinHandle,
-    time,
 };
 
 /// Single atomic number that gets incremented once, used to track first scan vs. all others
 static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Atomic boolean flag, used to determine whether or not a scan should pause or resume
-pub static PAUSE_SCAN: AtomicBool = AtomicBool::new(false);
+/// Single atomic number that gets holds the number of requests to be sent per directory scanned
+pub static NUMBER_OF_REQUESTS: AtomicU64 = AtomicU64::new(0);
 
 lazy_static! {
     /// Set of urls that have been sent to [scan_url](fn.scan_url.html), used for deduplication
-    static ref SCANNED_URLS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
-
-    /// A clock spinner protected with a RwLock to allow for a single thread to use at a time
-    static ref SINGLE_SPINNER: RwLock<ProgressBar> = RwLock::new(get_single_spinner());
+    pub static ref SCANNED_URLS: FeroxScans = FeroxScans::default();
 
     /// Vector of implementors of the FeroxFilter trait
     static ref FILTERS: Arc<RwLock<Vec<Box<dyn FeroxFilter>>>> = Arc::new(RwLock::new(Vec::<Box<dyn FeroxFilter>>::new()));
 
+    /// Vector of FeroxResponse objects
+    pub static ref RESPONSES: FeroxResponses = FeroxResponses::default();
+
     /// Bounded semaphore used as a barrier to limit concurrent scans
     static ref SCAN_LIMITER: Semaphore = Semaphore::new(CONFIGURATION.scan_limit);
-}
-
-/// Return a clock spinner, used when scans are paused
-fn get_single_spinner() -> ProgressBar {
-    log::trace!("enter: get_single_spinner");
-
-    let spinner = ProgressBar::new_spinner().with_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&[
-                "🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚",
-            ])
-            .template(&format!(
-                "\t-= All Scans {{spinner}} {} =-",
-                style("Paused").red()
-            )),
-    );
-
-    log::trace!("exit: get_single_spinner -> {:?}", spinner);
-    spinner
-}
-
-/// Forced the calling thread into a busy loop
-///
-/// Every `SLEEP_DURATION` milliseconds, the function examines the result stored in `PAUSE_SCAN`
-///
-/// When the value stored in `PAUSE_SCAN` becomes `false`, the function returns, exiting the busy
-/// loop
-async fn pause_scan() {
-    log::trace!("enter: pause_scan");
-    // function uses tokio::time, not std
-
-    // local testing showed a pretty slow increase (less than linear) in CPU usage as # of
-    // concurrent scans rose when SLEEP_DURATION was set to 500, using that as the default for now
-    let mut interval = time::interval(time::Duration::from_millis(SLEEP_DURATION));
-
-    // ignore any error returned
-    let _ = stderr().flush();
-
-    if SINGLE_SPINNER.read().unwrap().is_finished() {
-        // in order to not leave draw artifacts laying around in the terminal, we call
-        // finish_and_clear on the progress bar when resuming scans. For this reason, we need to
-        // check if the spinner is finished, and repopulate the RwLock with a new spinner if
-        // necessary
-        if let Ok(mut guard) = SINGLE_SPINNER.write() {
-            *guard = get_single_spinner();
-        }
-    }
-
-    if let Ok(spinner) = SINGLE_SPINNER.write() {
-        spinner.enable_steady_tick(120);
-    }
-
-    loop {
-        // first tick happens immediately, all others wait the specified duration
-        interval.tick().await;
-
-        if !PAUSE_SCAN.load(Ordering::Acquire) {
-            // PAUSE_SCAN is false, so we can exit the busy loop
-            if let Ok(spinner) = SINGLE_SPINNER.write() {
-                spinner.finish_and_clear();
-            }
-            let _ = stderr().flush();
-            log::trace!("exit: pause_scan");
-            return;
-        }
-    }
-}
-
-/// Adds the given url to `SCANNED_URLS`
-///
-/// If `SCANNED_URLS` did not already contain the url, return true; otherwise return false
-fn add_url_to_list_of_scanned_urls(resp: &str, scanned_urls: &RwLock<HashSet<String>>) -> bool {
-    log::trace!(
-        "enter: add_url_to_list_of_scanned_urls({}, {:?})",
-        resp,
-        scanned_urls
-    );
-
-    match scanned_urls.write() {
-        // check new url against what's already been scanned
-        Ok(mut urls) => {
-            // If the set did not contain resp, true is returned.
-            // If the set did contain resp, false is returned.
-            let response = urls.insert(resp.to_string());
-
-            log::trace!("exit: add_url_to_list_of_scanned_urls -> {}", response);
-            response
-        }
-        Err(e) => {
-            // poisoned lock
-            log::error!("Set of scanned urls poisoned: {}", e);
-            log::trace!("exit: add_url_to_list_of_scanned_urls -> false");
-            false
-        }
-    }
 }
 
 /// Adds the given FeroxFilter to the given list of FeroxFilter implementors
@@ -190,7 +98,7 @@ fn spawn_recursion_handler(
     wordlist: Arc<HashSet<String>>,
     base_depth: usize,
     tx_term: UnboundedSender<FeroxResponse>,
-    tx_file: UnboundedSender<String>,
+    tx_file: UnboundedSender<FeroxResponse>,
 ) -> BoxFuture<'static, Vec<JoinHandle<()>>> {
     log::trace!(
         "enter: spawn_recursion_handler({:?}, wordlist[{} words...], {}, {:?}, {:?})",
@@ -205,7 +113,7 @@ fn spawn_recursion_handler(
         let mut scans = vec![];
 
         while let Some(resp) = recursion_channel.recv().await {
-            let unknown = add_url_to_list_of_scanned_urls(&resp, &SCANNED_URLS);
+            let (unknown, _) = SCANNED_URLS.add_directory_scan(&resp);
 
             if !unknown {
                 // not unknown, i.e. we've seen the url before and don't need to scan again
@@ -219,7 +127,7 @@ fn spawn_recursion_handler(
             let resp_clone = resp.clone();
             let list_clone = wordlist.clone();
 
-            scans.push(tokio::spawn(async move {
+            let future = tokio::spawn(async move {
                 scan_url(
                     resp_clone.to_owned().as_str(),
                     list_clone,
@@ -228,7 +136,9 @@ fn spawn_recursion_handler(
                     file_clone,
                 )
                 .await
-            }));
+            });
+
+            scans.push(future);
         }
         scans
     }
@@ -415,22 +325,6 @@ async fn try_recursion(
 /// Simple helper to stay DRY; determines whether or not a given `FeroxResponse` should be reported
 /// to the user or not.
 pub fn should_filter_response(response: &FeroxResponse) -> bool {
-    if CONFIGURATION
-        .filter_size
-        .contains(&response.content_length())
-        || CONFIGURATION
-            .filter_line_count
-            .contains(&response.line_count())
-        || CONFIGURATION
-            .filter_word_count
-            .contains(&response.word_count())
-    {
-        // filtered value from --filter-size, size filters and wildcards are two separate filters
-        // and are applied independently
-        log::debug!("size filter: filtered out {}", response.url());
-        return true;
-    }
-
     match FILTERS.read() {
         Ok(filters) => {
             for filter in filters.iter() {
@@ -491,13 +385,6 @@ async fn make_requests(
                 let new_links = get_links(&ferox_response).await;
 
                 for new_link in new_links {
-                    let unknown = add_url_to_list_of_scanned_urls(&new_link, &SCANNED_URLS);
-
-                    if !unknown {
-                        // not unknown, i.e. we've seen the url before and don't need to scan again
-                        continue;
-                    }
-
                     // create a url based on the given command line options, continue on error
                     let new_url = match format_url(
                         &new_link,
@@ -509,6 +396,11 @@ async fn make_requests(
                         Ok(url) => url,
                         Err(_) => continue,
                     };
+
+                    if SCANNED_URLS.get_scan_by_url(&new_url.to_string()).is_some() {
+                        //we've seen the url before and don't need to scan again
+                        continue;
+                    }
 
                     // make the request and store the response
                     let new_response = match make_request(&CONFIGURATION.client, &new_url).await {
@@ -526,6 +418,8 @@ async fn make_requests(
                     if new_ferox_response.is_file() {
                         // very likely a file, simply request and report
                         log::debug!("Singular extraction: {}", new_ferox_response);
+
+                        SCANNED_URLS.add_file_scan(&new_url.to_string());
 
                         send_report(report_chan.clone(), new_ferox_response);
 
@@ -579,7 +473,7 @@ pub async fn scan_url(
     wordlist: Arc<HashSet<String>>,
     base_depth: usize,
     tx_term: UnboundedSender<FeroxResponse>,
-    tx_file: UnboundedSender<String>,
+    tx_file: UnboundedSender<FeroxResponse>,
 ) {
     log::trace!(
         "enter: scan_url({:?}, wordlist[{} words...], {}, {:?}, {:?})",
@@ -594,30 +488,32 @@ pub async fn scan_url(
 
     let (tx_dir, rx_dir): FeroxChannel<String> = mpsc::unbounded_channel();
 
-    let num_reqs_expected: u64 = if CONFIGURATION.extensions.is_empty() {
-        wordlist.len().try_into().unwrap()
-    } else {
-        let total = wordlist.len() * (CONFIGURATION.extensions.len() + 1);
-        total.try_into().unwrap()
-    };
-
-    let progress_bar = progress::add_bar(&target_url, num_reqs_expected, false);
-    progress_bar.reset_elapsed();
-
     if CALL_COUNT.load(Ordering::Relaxed) == 0 {
         CALL_COUNT.fetch_add(1, Ordering::Relaxed);
 
         // this protection allows us to add the first scanned url to SCANNED_URLS
         // from within the scan_url function instead of the recursion handler
-        add_url_to_list_of_scanned_urls(&target_url, &SCANNED_URLS);
-
-        if CONFIGURATION.scan_limit == 0 {
-            // scan_limit == 0 means no limit should be imposed... however, scoping the Semaphore
-            // permit is tricky, so as a workaround, we'll add a ridiculous number of permits to
-            // the semaphore (1,152,921,504,606,846,975 to be exact) and call that 'unlimited'
-            SCAN_LIMITER.add_permits(usize::MAX >> 4);
-        }
+        SCANNED_URLS.add_directory_scan(&target_url);
     }
+
+    let ferox_scan = match SCANNED_URLS.get_scan_by_url(&target_url) {
+        Some(scan) => scan,
+        None => {
+            log::error!(
+                "Could not find FeroxScan associated with {}; this shouldn't happen... exiting",
+                target_url
+            );
+            return;
+        }
+    };
+
+    let progress_bar = match ferox_scan.lock() {
+        Ok(mut scan) => scan.progress_bar(),
+        Err(e) => {
+            log::error!("FeroxScan's ({:?}) mutex is poisoned: {}", ferox_scan, e);
+            return;
+        }
+    };
 
     // When acquire is called and the semaphore has remaining permits, the function immediately
     // returns a permit. However, if no remaining permits are available, acquire (asynchronously)
@@ -627,7 +523,7 @@ pub async fn scan_url(
 
     // Arc clones to be passed around to the various scans
     let wildcard_bar = progress_bar.clone();
-    let heuristics_file_clone = tx_file.clone();
+    let heuristics_term_clone = tx_term.clone();
     let recurser_term_clone = tx_term.clone();
     let recurser_file_clone = tx_file.clone();
     let recurser_words = wordlist.clone();
@@ -646,21 +542,12 @@ pub async fn scan_url(
 
     // add any wildcard filters to `FILTERS`
     let filter =
-        match heuristics::wildcard_test(&target_url, wildcard_bar, heuristics_file_clone).await {
+        match heuristics::wildcard_test(&target_url, wildcard_bar, heuristics_term_clone).await {
             Some(f) => Box::new(f),
             None => Box::new(WildcardFilter::default()),
         };
 
     add_filter_to_list_of_ferox_filters(filter, FILTERS.clone());
-
-    // add any status code filters to `FILTERS`
-    for code_filter in &CONFIGURATION.filter_status {
-        let filter = StatusCodeFilter {
-            filter_code: *code_filter,
-        };
-        let boxed_filter = Box::new(filter);
-        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
-    }
 
     // producer tasks (mp of mpsc); responsible for making requests
     let producers = stream::iter(looping_words.deref().to_owned())
@@ -675,7 +562,9 @@ pub async fn scan_url(
                         // for every word in the wordlist, check to see if PAUSE_SCAN is set to true
                         // when true; enter a busy loop that only exits by setting PAUSE_SCAN back
                         // to false
-                        pause_scan().await;
+
+                        // todo change to true when issue #107 is resolved
+                        SCANNED_URLS.pause(false).await;
                     }
                     make_requests(&tgt, &word, base_depth, txd, txr).await
                 }),
@@ -701,7 +590,9 @@ pub async fn scan_url(
     // drop the current permit so the semaphore will allow another scan to proceed
     drop(permit);
 
-    progress_bar.finish();
+    if let Ok(mut scan) = ferox_scan.lock() {
+        scan.finish();
+    }
 
     // manually drop tx in order for the rx task's while loops to eval to false
     log::trace!("dropped recursion handler's transmitter");
@@ -713,6 +604,89 @@ pub async fn scan_url(
     log::trace!("done awaiting recursive scan receiver/scans");
 
     log::trace!("exit: scan_url");
+}
+
+/// Perform steps necessary to run scans that only need to be performed once (warming up the
+/// engine, as it were)
+pub fn initialize(num_words: usize, config: &Configuration) {
+    log::trace!("enter: initialize({}, {:?})", num_words, config,);
+
+    // number of requests only needs to be calculated once, and then can be reused
+    let num_reqs_expected: u64 = if config.extensions.is_empty() {
+        num_words.try_into().unwrap()
+    } else {
+        let total = num_words * (config.extensions.len() + 1);
+        total.try_into().unwrap()
+    };
+
+    NUMBER_OF_REQUESTS.store(num_reqs_expected, Ordering::Relaxed);
+
+    // add any status code filters to `FILTERS` (-C|--filter-status)
+    for code_filter in &config.filter_status {
+        let filter = StatusCodeFilter {
+            filter_code: *code_filter,
+        };
+        let boxed_filter = Box::new(filter);
+        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
+    }
+
+    // add any line count filters to `FILTERS` (-N|--filter-lines)
+    for lines_filter in &config.filter_line_count {
+        let filter = LinesFilter {
+            line_count: *lines_filter,
+        };
+        let boxed_filter = Box::new(filter);
+        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
+    }
+
+    // add any line count filters to `FILTERS` (-W|--filter-words)
+    for words_filter in &config.filter_word_count {
+        let filter = WordsFilter {
+            word_count: *words_filter,
+        };
+        let boxed_filter = Box::new(filter);
+        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
+    }
+
+    // add any line count filters to `FILTERS` (-S|--filter-size)
+    for size_filter in &config.filter_size {
+        let filter = SizeFilter {
+            content_length: *size_filter,
+        };
+        let boxed_filter = Box::new(filter);
+        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
+    }
+
+    // add any regex filters to `FILTERS` (-X|--filter-regex)
+    for regex_filter in &config.filter_regex {
+        let raw = regex_filter;
+        let compiled = match Regex::new(&raw) {
+            Ok(regex) => regex,
+            Err(e) => {
+                log::error!("Invalid regular expression: {}", e);
+                #[cfg(test)]
+                panic!();
+                #[cfg(not(test))]
+                exit(1);
+            }
+        };
+
+        let filter = RegexFilter {
+            raw_string: raw.to_owned(),
+            compiled,
+        };
+        let boxed_filter = Box::new(filter);
+        add_filter_to_list_of_ferox_filters(boxed_filter, FILTERS.clone());
+    }
+
+    if config.scan_limit == 0 {
+        // scan_limit == 0 means no limit should be imposed... however, scoping the Semaphore
+        // permit is tricky, so as a workaround, we'll add a ridiculous number of permits to
+        // the semaphore (1,152,921,504,606,846,975 to be exact) and call that 'unlimited'
+        SCAN_LIMITER.add_permits(usize::MAX >> 4);
+    }
+
+    log::trace!("exit: initialize");
 }
 
 #[cfg(test)]
@@ -814,66 +788,11 @@ mod tests {
     }
 
     #[test]
-    /// add an unknown url to the hashset, expect true
-    fn add_url_to_list_of_scanned_urls_with_unknown_url() {
-        let urls = RwLock::new(HashSet::<String>::new());
-        let url = "http://unknown_url";
-        assert_eq!(add_url_to_list_of_scanned_urls(url, &urls), true);
-    }
-
-    #[test]
-    /// add a known url to the hashset, with a trailing slash, expect false
-    fn add_url_to_list_of_scanned_urls_with_known_url() {
-        let urls = RwLock::new(HashSet::<String>::new());
-        let url = "http://unknown_url/";
-
-        assert_eq!(urls.write().unwrap().insert(url.to_string()), true);
-
-        assert_eq!(add_url_to_list_of_scanned_urls(url, &urls), false);
-    }
-
-    #[test]
-    /// add a known url to the hashset, without a trailing slash, expect false
-    fn add_url_to_list_of_scanned_urls_with_known_url_without_slash() {
-        let urls = RwLock::new(HashSet::<String>::new());
-        let url = "http://unknown_url";
-
-        assert_eq!(
-            urls.write()
-                .unwrap()
-                .insert("http://unknown_url".to_string()),
-            true
-        );
-
-        assert_eq!(add_url_to_list_of_scanned_urls(url, &urls), false);
-    }
-
-    #[test]
-    /// test that get_single_spinner returns the correct spinner
-    fn scanner_get_single_spinner_returns_spinner() {
-        let spinner = get_single_spinner();
-        assert!(!spinner.is_finished());
-    }
-
-    #[tokio::test(core_threads = 1)]
-    /// tests that pause_scan pauses execution and releases execution when PAUSE_SCAN is toggled
-    /// the spinner used during the test has had .finish_and_clear called on it, meaning that
-    /// a new one will be created, taking the if branch within the function
-    async fn scanner_pause_scan_with_finished_spinner() {
-        let now = time::Instant::now();
-
-        PAUSE_SCAN.store(true, Ordering::Relaxed);
-        SINGLE_SPINNER.write().unwrap().finish_and_clear();
-
-        let expected = time::Duration::from_secs(2);
-
-        tokio::spawn(async move {
-            time::delay_for(expected).await;
-            PAUSE_SCAN.store(false, Ordering::Relaxed);
-        });
-
-        pause_scan().await;
-
-        assert!(now.elapsed() > expected);
+    #[should_panic]
+    /// call initialize with a bad regex, triggering a panic
+    fn initialize_panics_on_bad_regex() {
+        let mut config = Configuration::default();
+        config.filter_regex = vec![r"(".to_string()];
+        initialize(1, &config);
     }
 }

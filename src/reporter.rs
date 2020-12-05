@@ -1,6 +1,9 @@
-use crate::config::{CONFIGURATION, PROGRESS_PRINTER};
-use crate::utils::{create_report_string, ferox_print, make_request};
-use crate::{FeroxChannel, FeroxResponse};
+use crate::{
+    config::{CONFIGURATION, PROGRESS_PRINTER},
+    scanner::RESPONSES,
+    utils::{ferox_print, make_request, open_file},
+    FeroxChannel, FeroxResponse, FeroxSerialize,
+};
 use console::strip_ansi_codes;
 use std::io::Write;
 use std::sync::{Arc, Once, RwLock};
@@ -41,14 +44,14 @@ pub fn initialize(
     save_output: bool,
 ) -> (
     UnboundedSender<FeroxResponse>,
-    UnboundedSender<String>,
+    UnboundedSender<FeroxResponse>,
     JoinHandle<()>,
     Option<JoinHandle<()>>,
 ) {
     log::trace!("enter: initialize({}, {})", output_file, save_output);
 
     let (tx_rpt, rx_rpt): FeroxChannel<FeroxResponse> = mpsc::unbounded_channel();
-    let (tx_file, rx_file): FeroxChannel<String> = mpsc::unbounded_channel();
+    let (tx_file, rx_file): FeroxChannel<FeroxResponse> = mpsc::unbounded_channel();
 
     let file_clone = tx_file.clone();
 
@@ -81,7 +84,7 @@ pub fn initialize(
 /// reporting criteria
 async fn spawn_terminal_reporter(
     mut resp_chan: UnboundedReceiver<FeroxResponse>,
-    file_chan: UnboundedSender<String>,
+    file_chan: UnboundedSender<FeroxResponse>,
     save_output: bool,
 ) {
     log::trace!(
@@ -94,21 +97,17 @@ async fn spawn_terminal_reporter(
     while let Some(resp) = resp_chan.recv().await {
         log::trace!("received {} on reporting channel", resp.url());
 
-        if CONFIGURATION.status_codes.contains(&resp.status().as_u16()) {
-            let report = create_report_string(
-                resp.status().as_str(),
-                &resp.line_count().to_string(),
-                &resp.word_count().to_string(),
-                &resp.content_length().to_string(),
-                &resp.url().to_string(),
-            );
+        let contains_sentry = CONFIGURATION.status_codes.contains(&resp.status().as_u16());
+        let unknown_sentry = !RESPONSES.contains(&resp); // !contains == unknown
+        let should_process_response = contains_sentry && unknown_sentry;
 
+        if should_process_response {
             // print to stdout
-            ferox_print(&report, &PROGRESS_PRINTER);
+            ferox_print(&resp.as_str(), &PROGRESS_PRINTER);
 
             if save_output {
                 // -o used, need to send the report to be written out to disk
-                match file_chan.send(report.to_string()) {
+                match file_chan.send(resp.clone()) {
                     Ok(_) => {
                         log::debug!("Sent {} to file handler", resp.url());
                     }
@@ -120,9 +119,7 @@ async fn spawn_terminal_reporter(
         }
         log::trace!("report complete: {}", resp.url());
 
-        if CONFIGURATION.replay_client.is_some()
-            && CONFIGURATION.replay_codes.contains(&resp.status().as_u16())
-        {
+        if CONFIGURATION.replay_client.is_some() && should_process_response {
             // replay proxy specified/client created and this response's status code is one that
             // should be replayed
             match make_request(CONFIGURATION.replay_client.as_ref().unwrap(), &resp.url()).await {
@@ -132,6 +129,13 @@ async fn spawn_terminal_reporter(
                 }
             }
         }
+
+        if should_process_response {
+            // add response to RESPONSES for serialization in case of ctrl+c
+            // placed all by its lonesome like this so that RESPONSES can take ownership
+            // of the FeroxResponse
+            RESPONSES.insert(resp);
+        }
     }
     log::trace!("exit: spawn_terminal_reporter");
 }
@@ -140,7 +144,10 @@ async fn spawn_terminal_reporter(
 ///
 /// The consumer simply receives responses and writes them to the given output file if they meet
 /// the given reporting criteria
-async fn spawn_file_reporter(mut report_channel: UnboundedReceiver<String>, output_file: &str) {
+async fn spawn_file_reporter(
+    mut report_channel: UnboundedReceiver<FeroxResponse>,
+    output_file: &str,
+) {
     let buffered_file = match get_cached_file_handle(&CONFIGURATION.output) {
         Some(file) => file,
         None => {
@@ -157,46 +164,32 @@ async fn spawn_file_reporter(mut report_channel: UnboundedReceiver<String>, outp
 
     log::info!("Writing scan results to {}", output_file);
 
-    while let Some(report) = report_channel.recv().await {
-        safe_file_write(&report, buffered_file.clone());
+    while let Some(response) = report_channel.recv().await {
+        safe_file_write(&response, buffered_file.clone(), CONFIGURATION.json);
     }
 
     log::trace!("exit: spawn_file_reporter");
 }
 
-/// Given the path to a file, open the file in append mode (create it if it doesn't exist) and
-/// return a reference to the file that is buffered and locked
-fn open_file(filename: &str) -> Option<Arc<RwLock<io::BufWriter<fs::File>>>> {
-    log::trace!("enter: open_file({})", filename);
-
-    match fs::OpenOptions::new() // std fs
-        .create(true)
-        .append(true)
-        .open(filename)
-    {
-        Ok(file) => {
-            let writer = io::BufWriter::new(file); // std io
-
-            let locked_file = Some(Arc::new(RwLock::new(writer)));
-
-            log::trace!("exit: open_file -> {:?}", locked_file);
-            locked_file
-        }
-        Err(e) => {
-            log::error!("{}", e);
-            log::trace!("exit: open_file -> None");
-            None
-        }
-    }
-}
-
 /// Given a string and a reference to a locked buffered file, write the contents and flush
 /// the buffer to disk.
-pub fn safe_file_write(contents: &str, locked_file: Arc<RwLock<io::BufWriter<fs::File>>>) {
+pub fn safe_file_write<T>(
+    value: &T,
+    locked_file: Arc<RwLock<io::BufWriter<fs::File>>>,
+    convert_to_json: bool,
+) where
+    T: FeroxSerialize,
+{
     // note to future self: adding logging of anything other than error to this function
     // is a bad idea. we call this function while processing records generated by the logger.
     // If we then call log::... while already processing some logging output, it results in
     // the second log entry being injected into the first.
+
+    let contents = if convert_to_json {
+        value.as_json()
+    } else {
+        value.as_str()
+    };
 
     let contents = strip_ansi_codes(&contents);
 

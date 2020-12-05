@@ -1,6 +1,7 @@
 use crate::config::CONFIGURATION;
 use crate::utils::get_url_path_length;
 use crate::FeroxResponse;
+use regex::Regex;
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -138,5 +139,284 @@ impl FeroxFilter for StatusCodeFilter {
     /// Return self as Any for dynamic dispatch purposes
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// Simple implementor of FeroxFilter; used to filter out responses based on the number of lines
+/// in a Response body; specified using -N|--filter-lines
+#[derive(Default, Debug, PartialEq)]
+pub struct LinesFilter {
+    /// Number of lines in a Response's body that should be filtered
+    pub line_count: usize,
+}
+
+/// implementation of FeroxFilter for LinesFilter
+impl FeroxFilter for LinesFilter {
+    /// Check `line_count` against what was passed in via -N|--filter-lines
+    fn should_filter_response(&self, response: &FeroxResponse) -> bool {
+        log::trace!("enter: should_filter_response({:?} {})", self, response);
+
+        let result = response.line_count() == self.line_count;
+
+        log::trace!("exit: should_filter_response -> {}", result);
+
+        result
+    }
+
+    /// Compare one LinesFilter to another
+    fn box_eq(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<Self>().map_or(false, |a| self == a)
+    }
+
+    /// Return self as Any for dynamic dispatch purposes
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Simple implementor of FeroxFilter; used to filter out responses based on the number of words
+/// in a Response body; specified using -W|--filter-words
+#[derive(Default, Debug, PartialEq)]
+pub struct WordsFilter {
+    /// Number of words in a Response's body that should be filtered
+    pub word_count: usize,
+}
+
+/// implementation of FeroxFilter for WordsFilter
+impl FeroxFilter for WordsFilter {
+    /// Check `word_count` against what was passed in via -W|--filter-words
+    fn should_filter_response(&self, response: &FeroxResponse) -> bool {
+        log::trace!("enter: should_filter_response({:?} {})", self, response);
+
+        let result = response.word_count() == self.word_count;
+
+        log::trace!("exit: should_filter_response -> {}", result);
+
+        result
+    }
+
+    /// Compare one WordsFilter to another
+    fn box_eq(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<Self>().map_or(false, |a| self == a)
+    }
+
+    /// Return self as Any for dynamic dispatch purposes
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Simple implementor of FeroxFilter; used to filter out responses based on the length of a
+/// Response body; specified using -S|--filter-size
+#[derive(Default, Debug, PartialEq)]
+pub struct SizeFilter {
+    /// Overall length of a Response's body that should be filtered
+    pub content_length: u64,
+}
+
+/// implementation of FeroxFilter for SizeFilter
+impl FeroxFilter for SizeFilter {
+    /// Check `content_length` against what was passed in via -S|--filter-size
+    fn should_filter_response(&self, response: &FeroxResponse) -> bool {
+        log::trace!("enter: should_filter_response({:?} {})", self, response);
+
+        let result = response.content_length() == self.content_length;
+
+        log::trace!("exit: should_filter_response -> {}", result);
+
+        result
+    }
+
+    /// Compare one SizeFilter to another
+    fn box_eq(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<Self>().map_or(false, |a| self == a)
+    }
+
+    /// Return self as Any for dynamic dispatch purposes
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Simple implementor of FeroxFilter; used to filter out responses based on a given regular
+/// expression; specified using -X|--filter-regex
+#[derive(Debug)]
+pub struct RegexFilter {
+    /// Regular expression to be applied to the response body for filtering, compiled
+    pub compiled: Regex,
+
+    /// Regular expression as passed in on the command line, not compiled
+    pub raw_string: String,
+}
+
+/// implementation of FeroxFilter for RegexFilter
+impl FeroxFilter for RegexFilter {
+    /// Check `expression` against the response body, if the expression matches, the response
+    /// should be filtered out
+    fn should_filter_response(&self, response: &FeroxResponse) -> bool {
+        log::trace!("enter: should_filter_response({:?} {})", self, response);
+
+        let result = self.compiled.is_match(response.text());
+
+        log::trace!("exit: should_filter_response -> {}", result);
+
+        result
+    }
+
+    /// Compare one SizeFilter to another
+    fn box_eq(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<Self>().map_or(false, |a| self == a)
+    }
+
+    /// Return self as Any for dynamic dispatch purposes
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// PartialEq implementation for RegexFilter
+impl PartialEq for RegexFilter {
+    /// Simple comparison of the raw string passed in via the command line
+    fn eq(&self, other: &RegexFilter) -> bool {
+        self.raw_string == other.raw_string
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::Url;
+
+    #[test]
+    /// just a simple test to increase code coverage by hitting as_any and the inner value
+    fn lines_filter_as_any() {
+        let filter = LinesFilter { line_count: 1 };
+
+        assert_eq!(filter.line_count, 1);
+        assert_eq!(
+            *filter.as_any().downcast_ref::<LinesFilter>().unwrap(),
+            filter
+        );
+    }
+
+    #[test]
+    /// just a simple test to increase code coverage by hitting as_any and the inner value
+    fn words_filter_as_any() {
+        let filter = WordsFilter { word_count: 1 };
+
+        assert_eq!(filter.word_count, 1);
+        assert_eq!(
+            *filter.as_any().downcast_ref::<WordsFilter>().unwrap(),
+            filter
+        );
+    }
+
+    #[test]
+    /// just a simple test to increase code coverage by hitting as_any and the inner value
+    fn size_filter_as_any() {
+        let filter = SizeFilter { content_length: 1 };
+
+        assert_eq!(filter.content_length, 1);
+        assert_eq!(
+            *filter.as_any().downcast_ref::<SizeFilter>().unwrap(),
+            filter
+        );
+    }
+
+    #[test]
+    /// just a simple test to increase code coverage by hitting as_any and the inner value
+    fn status_code_filter_as_any() {
+        let filter = StatusCodeFilter { filter_code: 200 };
+
+        assert_eq!(filter.filter_code, 200);
+        assert_eq!(
+            *filter.as_any().downcast_ref::<StatusCodeFilter>().unwrap(),
+            filter
+        );
+    }
+
+    #[test]
+    /// just a simple test to increase code coverage by hitting as_any and the inner value
+    fn regex_filter_as_any() {
+        let raw = r".*\.txt$";
+        let compiled = Regex::new(raw).unwrap();
+        let filter = RegexFilter {
+            compiled,
+            raw_string: raw.to_string(),
+        };
+
+        assert_eq!(filter.raw_string, r".*\.txt$");
+        assert_eq!(
+            *filter.as_any().downcast_ref::<RegexFilter>().unwrap(),
+            filter
+        );
+    }
+
+    #[test]
+    /// test should_filter on WilcardFilter where static logic matches
+    fn wildcard_should_filter_when_static_wildcard_found() {
+        let resp = FeroxResponse {
+            text: String::new(),
+            wildcard: true,
+            url: Url::parse("http://localhost").unwrap(),
+            content_length: 100,
+            word_count: 50,
+            line_count: 25,
+            headers: reqwest::header::HeaderMap::new(),
+            status: reqwest::StatusCode::OK,
+        };
+
+        let filter = WildcardFilter {
+            size: 100,
+            dynamic: 0,
+        };
+
+        assert!(filter.should_filter_response(&resp));
+    }
+
+    #[test]
+    /// test should_filter on WilcardFilter where dynamic logic matches
+    fn wildcard_should_filter_when_dynamic_wildcard_found() {
+        let resp = FeroxResponse {
+            text: String::new(),
+            wildcard: true,
+            url: Url::parse("http://localhost/stuff").unwrap(),
+            content_length: 100,
+            word_count: 50,
+            line_count: 25,
+            headers: reqwest::header::HeaderMap::new(),
+            status: reqwest::StatusCode::OK,
+        };
+
+        let filter = WildcardFilter {
+            size: 0,
+            dynamic: 95,
+        };
+
+        assert!(filter.should_filter_response(&resp));
+    }
+
+    #[test]
+    /// test should_filter on RegexFilter where regex matches body
+    fn regexfilter_should_filter_when_regex_matches_on_response_body() {
+        let resp = FeroxResponse {
+            text: String::from("im a body response hurr durr!"),
+            wildcard: false,
+            url: Url::parse("http://localhost/stuff").unwrap(),
+            content_length: 100,
+            word_count: 50,
+            line_count: 25,
+            headers: reqwest::header::HeaderMap::new(),
+            status: reqwest::StatusCode::OK,
+        };
+
+        let raw = r"response...rr";
+
+        let filter = RegexFilter {
+            raw_string: raw.to_string(),
+            compiled: Regex::new(raw).unwrap(),
+        };
+
+        assert!(filter.should_filter_response(&resp));
     }
 }
