@@ -180,8 +180,8 @@ async fn get_targets() -> FeroxResult<Vec<String>> {
             targets.push(line?);
         }
     } else if CONFIGURATION.resumed {
-        // resume-from can't be used with any other flag, making it mutually exclusive from either
-        // of the other two options
+        // resume-from can't be used with --url, and --stdin is marked false for every resumed
+        // scan, making it mutually exclusive from either of the other two options
         if let Ok(scans) = SCANNED_URLS.scans.lock() {
             for scan in scans.iter() {
                 // SCANNED_URLS gets deserialized scans added to it at program start if --resume-from
@@ -219,6 +219,14 @@ async fn wrapped_main() {
         PROGRESS_PRINTER.println("");
         PROGRESS_BAR.join().unwrap();
     });
+
+    if !CONFIGURATION.time_limit.is_empty() {
+        // --time-limit value not an empty string, need to kick off the thread that enforces
+        // the limit
+        tokio::spawn(async move {
+            scan_manager::start_max_time_thread(&CONFIGURATION.time_limit).await
+        });
+    }
 
     // can't trace main until after logger is initialized and the above task is started
     log::trace!("enter: main");

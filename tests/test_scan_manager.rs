@@ -1,8 +1,11 @@
 mod utils;
 use assert_cmd::Command;
 use httpmock::Method::GET;
-use httpmock::{Mock, MockServer};
+use httpmock::MockServer;
 use predicates::prelude::*;
+use std::fs::{read_to_string, write};
+use std::path::Path;
+use std::time;
 use utils::{setup_tmp_directory, teardown_tmp_directory};
 
 #[test]
@@ -40,28 +43,23 @@ fn resume_scan_works() {
     let responses = format!(r#""responses":[{}]"#, response);
 
     // not scanned because /js is not complete, and /js/stuff response is not known
-    let not_scanned_yet = Mock::new()
-        .expect_method(GET)
-        .expect_path("/js/stuff")
-        .return_status(200)
-        .return_body("i expect to be scanned")
-        .create_on(&srv);
+    let not_scanned_yet = srv.mock(|when, then| {
+        when.method(GET).path("/js/stuff");
+        then.status(200).body("i expect to be scanned");
+    });
 
     // will get scanned because /js is not complete, but because response of /js/css is known, the
     // response will not be in stdout
-    let already_scanned = Mock::new()
-        .expect_method(GET)
-        .expect_path("/js/css")
-        .return_status(200)
-        .create_on(&srv);
+    let already_scanned = srv.mock(|when, then| {
+        when.method(GET).path("/js/css");
+        then.status(200);
+    });
 
     // already scanned because scan on / is complete
-    let also_already_scanned = Mock::new()
-        .expect_method(GET)
-        .expect_path("/css")
-        .return_status(200)
-        .return_body("two words")
-        .create_on(&srv);
+    let also_already_scanned = srv.mock(|when, then| {
+        when.method(GET).path("/css");
+        then.status(200).body("two words");
+    });
 
     let state_file_contents = format!("{{{},{},{}}}", scans, config, responses);
     let (tmp_dir2, state_file) = setup_tmp_directory(&[state_file_contents], "state-file").unwrap();
@@ -87,7 +85,46 @@ fn resume_scan_works() {
     teardown_tmp_directory(tmp_dir);
     teardown_tmp_directory(tmp_dir2);
 
-    assert_eq!(already_scanned.times_called(), 1);
-    assert_eq!(also_already_scanned.times_called(), 0);
-    assert_eq!(not_scanned_yet.times_called(), 1);
+    assert_eq!(already_scanned.hits(), 1);
+    assert_eq!(also_already_scanned.hits(), 0);
+    assert_eq!(not_scanned_yet.hits(), 1);
+}
+
+#[test]
+/// kick off scan with a time limit;  
+fn time_limit_enforced_when_specified() {
+    let srv = MockServer::start();
+    let (tmp_dir, file) =
+        setup_tmp_directory(&["css".to_string(), "stuff".to_string()], "wordlist").unwrap();
+
+    // ensure the command will run long enough by adding crap to the wordlist
+    let more_words = read_to_string(Path::new("tests/extra-words")).unwrap();
+    write(&file, more_words).unwrap();
+
+    assert!(file.metadata().unwrap().len() > 100); // sanity check on wordlist size
+
+    let now = time::Instant::now();
+    let lower_bound = time::Duration::new(5, 0);
+    let upper_bound = time::Duration::new(6, 0);
+
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg(srv.url("/"))
+        .arg("--wordlist")
+        .arg(file.as_os_str())
+        .arg("--time-limit")
+        .arg("5s")
+        .assert()
+        .failure();
+
+    // expected run time is somewhere in the 30 seconds ballpark (real    0m37.376s)
+    // so if the cmd returns in a significantly shorter amount of time, the test will have
+    // succeeded
+
+    // --time-limit is 5 seconds, so elapsed should be in a window that is greater than 5
+    // but significantly less than 30ish
+    assert!(now.elapsed() > lower_bound && now.elapsed() < upper_bound);
+
+    teardown_tmp_directory(tmp_dir);
 }

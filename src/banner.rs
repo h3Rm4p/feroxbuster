@@ -1,6 +1,6 @@
 use crate::config::{Configuration, CONFIGURATION};
 use crate::utils::{make_request, status_colorizer};
-use console::style;
+use console::{style, Emoji};
 use reqwest::{Client, Url};
 use serde_json::Value;
 use std::io::Write;
@@ -126,6 +126,14 @@ async fn needs_update(client: &Client, url: &str, bin_version: &str) -> UpdateSt
     unknown
 }
 
+/// Simple wrapper for emoji or fallback when terminal doesn't support emoji
+fn format_emoji(emoji: &str) -> String {
+    let width = console::measure_text_width(emoji);
+    let pad_len = width * width;
+    let pad = format!("{:<pad_len$}", "\u{0020}", pad_len = pad_len);
+    Emoji(emoji, &pad).to_string()
+}
+
 /// Prints the banner to stdout.
 ///
 /// Only prints those settings which are either always present, or passed in by the user.
@@ -138,10 +146,10 @@ where
  ___  ___  __   __     __      __         __   ___
 |__  |__  |__) |__) | /  `    /  \ \_/ | |  \ |__
 |    |___ |  \ |  \ | \__,    \__/ / \ | |__/ |___
-by Ben "epi" Risher {}                  ver: {}"#,
-        '\u{1F913}', version
+by Ben "epi" Risher {}                 ver: {}"#,
+        Emoji("🤓", &format!("{:<2}", "\u{0020}")),
+        version
     );
-
     let status = needs_update(&CONFIGURATION.client, UPDATE_URL, version).await;
 
     let top = "───────────────────────────┬──────────────────────";
@@ -156,7 +164,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1F3af}", "Target Url", target)
+            format_banner_entry!(format_emoji("🎯"), "Target Url", target)
         )
         .unwrap_or_default(); // 🎯
     }
@@ -170,14 +178,14 @@ by Ben "epi" Risher {}                  ver: {}"#,
     writeln!(
         &mut writer,
         "{}",
-        format_banner_entry!("\u{1F680}", "Threads", config.threads)
+        format_banner_entry!(format_emoji("🚀"), "Threads", config.threads)
     )
     .unwrap_or_default(); // 🚀
 
     writeln!(
         &mut writer,
         "{}",
-        format_banner_entry!("\u{1f4d6}", "Wordlist", config.wordlist)
+        format_banner_entry!(format_emoji("📖"), "Wordlist", config.wordlist)
     )
     .unwrap_or_default(); // 📖
 
@@ -185,7 +193,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         &mut writer,
         "{}",
         format_banner_entry!(
-            "\u{1F197}",
+            format_emoji("🆗"),
             "Status Codes",
             format!("[{}]", codes.join(", "))
         )
@@ -205,7 +213,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             &mut writer,
             "{}",
             format_banner_entry!(
-                "\u{1f5d1}",
+                format_emoji("🗑"),
                 "Status Code Filters",
                 format!("[{}]", code_filters.join(", "))
             )
@@ -216,14 +224,14 @@ by Ben "epi" Risher {}                  ver: {}"#,
     writeln!(
         &mut writer,
         "{}",
-        format_banner_entry!("\u{1f4a5}", "Timeout (secs)", config.timeout)
+        format_banner_entry!(format_emoji("💥"), "Timeout (secs)", config.timeout)
     )
     .unwrap_or_default(); // 💥
 
     writeln!(
         &mut writer,
         "{}",
-        format_banner_entry!("\u{1F9a1}", "User-Agent", config.user_agent)
+        format_banner_entry!(format_emoji("🦡"), "User-Agent", config.user_agent)
     )
     .unwrap_or_default(); // 🦡
 
@@ -232,7 +240,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f489}", "Config File", config.config)
+            format_banner_entry!(format_emoji("💉"), "Config File", config.config)
         )
         .unwrap_or_default(); // 💉
     }
@@ -241,7 +249,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f48e}", "Proxy", config.proxy)
+            format_banner_entry!(format_emoji("💎"), "Proxy", config.proxy)
         )
         .unwrap_or_default(); // 💎
     }
@@ -255,7 +263,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f3a5}", "Replay Proxy", config.replay_proxy)
+            format_banner_entry!(format_emoji("🎥"), "Replay Proxy", config.replay_proxy)
         )
         .unwrap_or_default(); // 🎥
 
@@ -267,7 +275,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             &mut writer,
             "{}",
             format_banner_entry!(
-                "\u{1f4fc}",
+                format_emoji("📼"),
                 "Replay Proxy Codes",
                 format!("[{}]", replay_codes.join(", "))
             )
@@ -280,7 +288,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             writeln!(
                 &mut writer,
                 "{}",
-                format_banner_entry!("\u{1f92f}", "Header", name, value)
+                format_banner_entry!(format_emoji("🤯"), "Header", name, value)
             )
             .unwrap_or_default(); // 🤯
         }
@@ -291,7 +299,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             writeln!(
                 &mut writer,
                 "{}",
-                format_banner_entry!("\u{1f4a2}", "Size Filter", filter)
+                format_banner_entry!(format_emoji("💢"), "Size Filter", filter)
             )
             .unwrap_or_default(); // 💢
         }
@@ -301,7 +309,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f4a2}", "Word Count Filter", filter)
+            format_banner_entry!(format_emoji("💢"), "Word Count Filter", filter)
         )
         .unwrap_or_default(); // 💢
     }
@@ -310,7 +318,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f4a2}", "Line Count Filter", filter)
+            format_banner_entry!(format_emoji("💢"), "Line Count Filter", filter)
         )
         .unwrap_or_default(); // 💢
     }
@@ -319,7 +327,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f4a2}", "Regex Filter", filter)
+            format_banner_entry!(format_emoji("💢"), "Regex Filter", filter)
         )
         .unwrap_or_default(); // 💢
     }
@@ -328,7 +336,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1F50E}", "Extract Links", config.extract_links)
+            format_banner_entry!(format_emoji("🔎"), "Extract Links", config.extract_links)
         )
         .unwrap_or_default(); // 🔎
     }
@@ -337,7 +345,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1F9d4}", "JSON Output", config.json)
+            format_banner_entry!(format_emoji("🧔"), "JSON Output", config.json)
         )
         .unwrap_or_default(); // 🧔
     }
@@ -348,7 +356,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
                 &mut writer,
                 "{}",
                 format_banner_entry!(
-                    "\u{1f914}",
+                    format_emoji("🤔"),
                     "Query Parameter",
                     format!("{}={}", query.0, query.1)
                 )
@@ -361,7 +369,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f4be}", "Output File", config.output)
+            format_banner_entry!(format_emoji("💾"), "Output File", config.output)
         )
         .unwrap_or_default(); // 💾
     }
@@ -370,7 +378,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1fab2}", "Debugging Log", config.debug_log)
+            format_banner_entry!(format_emoji("🪲"), "Debugging Log", config.debug_log)
         )
         .unwrap_or_default(); // 🪲
     }
@@ -380,7 +388,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             &mut writer,
             "{}",
             format_banner_entry!(
-                "\u{1f4b2}",
+                format_emoji("💲"),
                 "Extensions",
                 format!("[{}]", config.extensions.join(", "))
             )
@@ -392,7 +400,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f513}", "Insecure", config.insecure)
+            format_banner_entry!(format_emoji("🔓"), "Insecure", config.insecure)
         )
         .unwrap_or_default(); // 🔓
     }
@@ -401,7 +409,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f4cd}", "Follow Redirects", config.redirects)
+            format_banner_entry!(format_emoji("📍"), "Follow Redirects", config.redirects)
         )
         .unwrap_or_default(); // 📍
     }
@@ -410,53 +418,31 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f92a}", "Filter Wildcards", !config.dont_filter)
+            format_banner_entry!(format_emoji("🤪"), "Filter Wildcards", !config.dont_filter)
         )
         .unwrap_or_default(); // 🤪
     }
 
-    match config.verbosity {
+    let volume = ["🔈", "🔉", "🔊", "📢"];
+    if let 1..=4 = config.verbosity {
         //speaker medium volume (increasing with verbosity to loudspeaker)
-        1 => {
-            writeln!(
-                &mut writer,
-                "{}",
-                format_banner_entry!("\u{1f508}", "Verbosity", config.verbosity)
+        writeln!(
+            &mut writer,
+            "{}",
+            format_banner_entry!(
+                format_emoji(volume[config.verbosity as usize - 1]),
+                "Verbosity",
+                config.verbosity
             )
-            .unwrap_or_default(); // 🔈
-        }
-        2 => {
-            writeln!(
-                &mut writer,
-                "{}",
-                format_banner_entry!("\u{1f509}", "Verbosity", config.verbosity)
-            )
-            .unwrap_or_default(); // 🔉
-        }
-        3 => {
-            writeln!(
-                &mut writer,
-                "{}",
-                format_banner_entry!("\u{1f50a}", "Verbosity", config.verbosity)
-            )
-            .unwrap_or_default(); // 🔊
-        }
-        4 => {
-            writeln!(
-                &mut writer,
-                "{}",
-                format_banner_entry!("\u{1f4e2}", "Verbosity", config.verbosity)
-            )
-            .unwrap_or_default(); // 📢
-        }
-        _ => {}
+        )
+        .unwrap_or_default();
     }
 
     if config.add_slash {
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1fa93}", "Add Slash", config.add_slash)
+            format_banner_entry!(format_emoji("🪓"), "Add Slash", config.add_slash)
         )
         .unwrap_or_default(); // 🪓
     }
@@ -466,14 +452,14 @@ by Ben "epi" Risher {}                  ver: {}"#,
             writeln!(
                 &mut writer,
                 "{}",
-                format_banner_entry!("\u{1f503}", "Recursion Depth", "INFINITE")
+                format_banner_entry!(format_emoji("🔃"), "Recursion Depth", "INFINITE")
             )
             .unwrap_or_default(); // 🔃
         } else {
             writeln!(
                 &mut writer,
                 "{}",
-                format_banner_entry!("\u{1f503}", "Recursion Depth", config.depth)
+                format_banner_entry!(format_emoji("🔃"), "Recursion Depth", config.depth)
             )
             .unwrap_or_default(); // 🔃
         }
@@ -481,7 +467,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f6ab}", "Do Not Recurse", config.no_recursion)
+            format_banner_entry!(format_emoji("🚫"), "Do Not Recurse", config.no_recursion)
         )
         .unwrap_or_default(); // 🚫
     }
@@ -490,9 +476,22 @@ by Ben "epi" Risher {}                  ver: {}"#,
         writeln!(
             &mut writer,
             "{}",
-            format_banner_entry!("\u{1f9a5}", "Concurrent Scan Limit", config.scan_limit)
+            format_banner_entry!(
+                format_emoji("🦥"),
+                "Concurrent Scan Limit",
+                config.scan_limit
+            )
         )
         .unwrap_or_default(); // 🦥
+    }
+
+    if !CONFIGURATION.time_limit.is_empty() {
+        writeln!(
+            &mut writer,
+            "{}",
+            format_banner_entry!(format_emoji("🕖"), "Time Limit", config.time_limit)
+        )
+        .unwrap_or_default(); // 🕖
     }
 
     if matches!(status, UpdateStatus::OutOfDate) {
@@ -500,7 +499,7 @@ by Ben "epi" Risher {}                  ver: {}"#,
             &mut writer,
             "{}",
             format_banner_entry!(
-                "\u{1f389}",
+                format_emoji("🎉"),
                 "New Version Available",
                 "https://github.com/epi052/feroxbuster/releases/latest"
             )
@@ -512,12 +511,14 @@ by Ben "epi" Risher {}                  ver: {}"#,
     // ⏯
     writeln!(
         &mut writer,
-        " \u{23ef}   Press [{}] to {}|{} your scan",
+        " {}   Press [{}] to {}|{} your scan",
+        format_emoji("⏯"),
         style("ENTER").yellow(),
         style("pause").red(),
         style("resume").green()
     )
     .unwrap_or_default();
+
     writeln!(&mut writer, "{}", addl_section).unwrap_or_default();
 }
 
@@ -526,7 +527,7 @@ mod tests {
     use super::*;
     use crate::VERSION;
     use httpmock::Method::GET;
-    use httpmock::{Mock, MockServer};
+    use httpmock::MockServer;
     use std::fs::read_to_string;
     use std::io::stderr;
     use std::time::Duration;
@@ -611,16 +612,14 @@ mod tests {
     async fn banner_needs_update_returns_up_to_date() {
         let srv = MockServer::start();
 
-        let mock = Mock::new()
-            .expect_method(GET)
-            .expect_path("/latest")
-            .return_status(200)
-            .return_body("{\"tag_name\":\"v1.1.0\"}")
-            .create_on(&srv);
+        let mock = srv.mock(|when, then| {
+            when.method(GET).path("/latest");
+            then.status(200).body("{\"tag_name\":\"v1.1.0\"}");
+        });
 
         let result = needs_update(&CONFIGURATION.client, &srv.url("/latest"), "1.1.0").await;
 
-        assert_eq!(mock.times_called(), 1);
+        assert_eq!(mock.hits(), 1);
         assert!(matches!(result, UpdateStatus::UpToDate));
     }
 
@@ -629,16 +628,14 @@ mod tests {
     async fn banner_needs_update_returns_out_of_date() {
         let srv = MockServer::start();
 
-        let mock = Mock::new()
-            .expect_method(GET)
-            .expect_path("/latest")
-            .return_status(200)
-            .return_body("{\"tag_name\":\"v1.1.0\"}")
-            .create_on(&srv);
+        let mock = srv.mock(|when, then| {
+            when.method(GET).path("/latest");
+            then.status(200).body("{\"tag_name\":\"v1.1.0\"}");
+        });
 
         let result = needs_update(&CONFIGURATION.client, &srv.url("/latest"), "1.0.1").await;
 
-        assert_eq!(mock.times_called(), 1);
+        assert_eq!(mock.hits(), 1);
         assert!(matches!(result, UpdateStatus::OutOfDate));
     }
 
@@ -647,17 +644,16 @@ mod tests {
     async fn banner_needs_update_returns_unknown_on_timeout() {
         let srv = MockServer::start();
 
-        let mock = Mock::new()
-            .expect_method(GET)
-            .expect_path("/latest")
-            .return_status(200)
-            .return_body("{\"tag_name\":\"v1.1.0\"}")
-            .return_with_delay(Duration::from_secs(8))
-            .create_on(&srv);
+        let mock = srv.mock(|when, then| {
+            when.method(GET).path("/latest");
+            then.status(200)
+                .body("{\"tag_name\":\"v1.1.0\"}")
+                .delay(Duration::from_secs(8));
+        });
 
         let result = needs_update(&CONFIGURATION.client, &srv.url("/latest"), "1.0.1").await;
 
-        assert_eq!(mock.times_called(), 1);
+        assert_eq!(mock.hits(), 1);
         assert!(matches!(result, UpdateStatus::Unknown));
     }
 
@@ -666,16 +662,14 @@ mod tests {
     async fn banner_needs_update_returns_unknown_on_bad_json_response() {
         let srv = MockServer::start();
 
-        let mock = Mock::new()
-            .expect_method(GET)
-            .expect_path("/latest")
-            .return_status(200)
-            .return_body("not json")
-            .create_on(&srv);
+        let mock = srv.mock(|when, then| {
+            when.method(GET).path("/latest");
+            then.status(200).body("not json");
+        });
 
         let result = needs_update(&CONFIGURATION.client, &srv.url("/latest"), "1.0.1").await;
 
-        assert_eq!(mock.times_called(), 1);
+        assert_eq!(mock.hits(), 1);
         assert!(matches!(result, UpdateStatus::Unknown));
     }
 
@@ -684,16 +678,15 @@ mod tests {
     async fn banner_needs_update_returns_unknown_on_json_without_correct_tag() {
         let srv = MockServer::start();
 
-        let mock = Mock::new()
-            .expect_method(GET)
-            .expect_path("/latest")
-            .return_status(200)
-            .return_body("{\"no tag_name\": \"doesn't exist\"}")
-            .create_on(&srv);
+        let mock = srv.mock(|when, then| {
+            when.method(GET).path("/latest");
+            then.status(200)
+                .body("{\"no tag_name\": \"doesn't exist\"}");
+        });
 
         let result = needs_update(&CONFIGURATION.client, &srv.url("/latest"), "1.0.1").await;
 
-        assert_eq!(mock.times_called(), 1);
+        assert_eq!(mock.hits(), 1);
         assert!(matches!(result, UpdateStatus::Unknown));
     }
 }
