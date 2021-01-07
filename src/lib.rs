@@ -1,3 +1,4 @@
+pub mod utils;
 pub mod banner;
 pub mod client;
 pub mod config;
@@ -10,7 +11,7 @@ pub mod progress;
 pub mod reporter;
 pub mod scan_manager;
 pub mod scanner;
-pub mod utils;
+pub mod statistics;
 
 use crate::utils::{get_url_path_length, status_colorizer};
 use console::{style, Color};
@@ -50,6 +51,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Maximum number of file descriptors that can be opened during a scan
 pub const DEFAULT_OPEN_FILE_LIMIT: usize = 8192;
+
+/// Default value used to determine near-duplicate web pages (equivalent to 95%)
+pub const SIMILARITY_THRESHOLD: u32 = 95;
 
 /// Default wordlist to use when `-w|--wordlist` isn't specified and not `wordlist` isn't set
 /// in a [ferox-config.toml](constant.DEFAULT_CONFIG_NAME.html) config file.

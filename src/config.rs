@@ -1,18 +1,23 @@
-use crate::scan_manager::resume_scan;
-use crate::utils::{module_colorizer, status_colorizer};
-use crate::{client, parser, progress};
-use crate::{FeroxSerialize, DEFAULT_CONFIG_NAME, DEFAULT_STATUS_CODES, DEFAULT_WORDLIST, VERSION};
+use crate::{
+    client, parser,
+    progress::{add_bar, BarType},
+    scan_manager::resume_scan,
+    utils::{module_colorizer, status_colorizer},
+    FeroxSerialize, DEFAULT_CONFIG_NAME, DEFAULT_STATUS_CODES, DEFAULT_WORDLIST, VERSION,
+};
 use clap::{value_t, ArgMatches};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget};
 use lazy_static::lazy_static;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::env::{current_dir, current_exe};
-use std::fs::read_to_string;
-use std::path::PathBuf;
 #[cfg(not(test))]
 use std::process::exit;
+use std::{
+    collections::HashMap,
+    env::{current_dir, current_exe},
+    fs::read_to_string,
+    path::PathBuf,
+};
 
 lazy_static! {
     /// Global configuration state
@@ -22,7 +27,7 @@ lazy_static! {
     pub static ref PROGRESS_BAR: MultiProgress = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
 
     /// Global progress bar that is only used for printing messages that don't jack up other bars
-    pub static ref PROGRESS_PRINTER: ProgressBar = progress::add_bar("", 0, true, false);
+    pub static ref PROGRESS_PRINTER: ProgressBar = add_bar("", 0, BarType::Hidden);
 }
 
 /// macro helper to abstract away repetitive configuration updates
@@ -80,7 +85,7 @@ fn report_and_exit(err: &str) -> ! {
 pub struct Configuration {
     #[serde(rename = "type", default = "serialized_type")]
     /// Name of this type of struct, used for serialization, i.e. `{"type":"configuration"}`
-    kind: String,
+    pub kind: String,
 
     /// Path to the wordlist
     #[serde(default = "wordlist")]
@@ -90,11 +95,11 @@ pub struct Configuration {
     #[serde(default)]
     pub config: String,
 
-    /// Proxy to use for requests (ex: http(s)://host:port, socks5://host:port)
+    /// Proxy to use for requests (ex: http(s)://host:port, socks5(h)://host:port)
     #[serde(default)]
     pub proxy: String,
 
-    /// Replay Proxy to use for requests (ex: http(s)://host:port, socks5://host:port)
+    /// Replay Proxy to use for requests (ex: http(s)://host:port, socks5(h)://host:port)
     #[serde(default)]
     pub replay_proxy: String,
 
@@ -223,6 +228,10 @@ pub struct Configuration {
     #[serde(default)]
     pub resumed: bool,
 
+    /// Resume scan from this file
+    #[serde(default)]
+    pub resume_from: String,
+
     /// Whether or not a scan's current state should be saved when user presses Ctrl+C
     ///
     /// Not configurable from CLI; can only be set from a config file
@@ -233,6 +242,10 @@ pub struct Configuration {
     /// non-negative integer and the next character is either s, m, h, or d (case insensitive)
     #[serde(default)]
     pub time_limit: String,
+
+    /// Filter out response bodies that meet a certain threshold of similarity
+    #[serde(default)]
+    pub filter_similar: Vec<String>,
 }
 
 // functions timeout, threads, status_codes, user_agent, wordlist, save_state, and depth are used to provide
@@ -320,6 +333,7 @@ impl Default for Configuration {
             debug_log: String::new(),
             target_url: String::new(),
             time_limit: String::new(),
+            resume_from: String::new(),
             replay_proxy: String::new(),
             queries: Vec::new(),
             extensions: Vec::new(),
@@ -328,6 +342,7 @@ impl Default for Configuration {
             filter_line_count: Vec::new(),
             filter_word_count: Vec::new(),
             filter_status: Vec::new(),
+            filter_similar: Vec::new(),
             headers: HashMap::new(),
             depth: depth(),
             threads: threads(),
@@ -359,6 +374,7 @@ impl Configuration {
     /// - **insecure**: `false` (don't be insecure, i.e. don't allow invalid certs)
     /// - **extensions**: `None`
     /// - **filter_size**: `None`
+    /// - **filter_similar**: `None`
     /// - **filter_regex**: `None`
     /// - **filter_word_count**: `None`
     /// - **filter_line_count**: `None`
@@ -395,8 +411,10 @@ impl Configuration {
     pub fn new() -> Self {
         // when compiling for test, we want to eliminate the runtime dependency of the parser
         if cfg!(test) {
-            let mut test_config = Configuration::default();
-            test_config.save_state = false; // don't clutter up junk when testing
+            let test_config = Configuration {
+                save_state: false, // don't clutter up junk when testing
+                ..Default::default()
+            };
             return test_config;
         }
 
@@ -509,6 +527,7 @@ impl Configuration {
         update_config_if_present!(&mut config.output, args, "output", String);
         update_config_if_present!(&mut config.debug_log, args, "debug_log", String);
         update_config_if_present!(&mut config.time_limit, args, "time_limit", String);
+        update_config_if_present!(&mut config.resume_from, args, "resume_from", String);
 
         if let Some(arg) = args.values_of("status_codes") {
             config.status_codes = arg
@@ -550,6 +569,10 @@ impl Configuration {
 
         if let Some(arg) = args.values_of("filter_regex") {
             config.filter_regex = arg.map(|val| val.to_string()).collect();
+        }
+
+        if let Some(arg) = args.values_of("filter_similar") {
+            config.filter_similar = arg.map(|val| val.to_string()).collect();
         }
 
         if let Some(arg) = args.values_of("filter_size") {
@@ -761,6 +784,11 @@ impl Configuration {
             Vec::<String>::new()
         );
         update_if_not_default!(
+            &mut conf.filter_similar,
+            new.filter_similar,
+            Vec::<String>::new()
+        );
+        update_if_not_default!(
             &mut conf.filter_word_count,
             new.filter_word_count,
             Vec::<usize>::new()
@@ -779,6 +807,7 @@ impl Configuration {
         update_if_not_default!(&mut conf.scan_limit, new.scan_limit, 0);
         update_if_not_default!(&mut conf.replay_proxy, new.replay_proxy, "");
         update_if_not_default!(&mut conf.debug_log, new.debug_log, "");
+        update_if_not_default!(&mut conf.resume_from, new.resume_from, "");
         update_if_not_default!(&mut conf.json, new.json, false);
 
         update_if_not_default!(&mut conf.timeout, new.timeout, timeout());
@@ -878,6 +907,7 @@ mod tests {
             time_limit = "10m"
             output = "/some/otherpath"
             debug_log = "/yet/anotherpath"
+            resume_from = "/some/state/file"
             redirects = true
             insecure = true
             extensions = ["html", "php", "js"]
@@ -893,6 +923,7 @@ mod tests {
             depth = 1
             filter_size = [4120]
             filter_regex = ["^ignore me$"]
+            filter_similar = ["https://somesite.com/soft404"]
             filter_word_count = [994, 992]
             filter_line_count = [34]
             filter_status = [201]
@@ -911,6 +942,7 @@ mod tests {
         assert_eq!(config.proxy, String::new());
         assert_eq!(config.target_url, String::new());
         assert_eq!(config.time_limit, String::new());
+        assert_eq!(config.resume_from, String::new());
         assert_eq!(config.debug_log, String::new());
         assert_eq!(config.config, String::new());
         assert_eq!(config.replay_proxy, String::new());
@@ -936,6 +968,7 @@ mod tests {
         assert_eq!(config.extensions, Vec::<String>::new());
         assert_eq!(config.filter_size, Vec::<u64>::new());
         assert_eq!(config.filter_regex, Vec::<String>::new());
+        assert_eq!(config.filter_similar, Vec::<String>::new());
         assert_eq!(config.filter_word_count, Vec::<usize>::new());
         assert_eq!(config.filter_line_count, Vec::<usize>::new());
         assert_eq!(config.filter_status, Vec::<u16>::new());
@@ -1105,6 +1138,13 @@ mod tests {
 
     #[test]
     /// parse the test config and see that the value parsed is correct
+    fn config_reads_filter_similar() {
+        let config = setup_config_test();
+        assert_eq!(config.filter_similar, vec!["https://somesite.com/soft404"]);
+    }
+
+    #[test]
+    /// parse the test config and see that the value parsed is correct
     fn config_reads_filter_size() {
         let config = setup_config_test();
         assert_eq!(config.filter_size, vec![4120]);
@@ -1143,6 +1183,13 @@ mod tests {
     fn config_reads_time_limit() {
         let config = setup_config_test();
         assert_eq!(config.time_limit, "10m");
+    }
+
+    #[test]
+    /// parse the test config and see that the value parsed is correct
+    fn config_reads_resume_from() {
+        let config = setup_config_test();
+        assert_eq!(config.resume_from, "/some/state/file");
     }
 
     #[test]
