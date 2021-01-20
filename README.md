@@ -101,6 +101,7 @@ Enumeration.
     - [Enforce a Time Limit on Your Scan (new in `v1.10.0`)](#enforce-a-time-limit-on-your-scan-new-in-v1100)
     - [Extract Links from robots.txt (New in `v1.10.2`)](#extract-links-from-robotstxt-new-in-v1102)
     - [Filter Response by Similarity to A Given Page (fuzzy filter) (new in `v1.11.0`)](#filter-response-by-similarity-to-a-given-page-fuzzy-filter-new-in-v1110)
+    - [Cancel a Recursive Scan Interactively (new in `v1.12.0`)](#cancel-a-recursive-scan-interactively-new-in-v1120)
 - [Comparison w/ Similar Tools](#-comparison-w-similar-tools)
 - [Common Problems/Issues (FAQ)](#-common-problemsissues-faq)
     - [No file descriptors available](#no-file-descriptors-available)
@@ -321,7 +322,7 @@ built-in defaults.
 `feroxbuster` searches for `ferox-config.toml` in the following locations (in the order shown):
 
 - `/etc/feroxbuster/` (global)
-- `CONFIG_DIR/ferxobuster/` (per-user)
+- `CONFIG_DIR/feroxbuster/` (per-user)
 - The same directory as the `feroxbuster` executable (per-user)
 - The user's current working directory (per-target)
 
@@ -434,34 +435,47 @@ FLAGS:
                            too much)
 
 OPTIONS:
-        --debug-log <FILE>                  Output file to write log entries (use w/ --json for JSON entries)
-    -d, --depth <RECURSION_DEPTH>           Maximum recursion depth, a depth of 0 is infinite recursion (default: 4)
-    -x, --extensions <FILE_EXTENSION>...    File extension(s) to search for (ex: -x php -x pdf js)
-    -N, --filter-lines <LINES>...           Filter out messages of a particular line count (ex: -N 20 -N 31,30)
-    -X, --filter-regex <REGEX>...           Filter out messages via regular expression matching on the response's body
-                                            (ex: -X '^ignore me$')
-    -S, --filter-size <SIZE>...             Filter out messages of a particular size (ex: -S 5120 -S 4927,1970)
-    -C, --filter-status <STATUS_CODE>...    Filter out status codes (deny list) (ex: -C 200 -C 401)
-    -W, --filter-words <WORDS>...           Filter out messages of a particular word count (ex: -W 312 -W 91,82)
-    -H, --headers <HEADER>...               Specify HTTP headers (ex: -H Header:val 'stuff: things')
-    -o, --output <FILE>                     Output file to write results to (use w/ --json for JSON entries)
-    -p, --proxy <PROXY>                     Proxy to use for requests (ex: http(s)://host:port, socks5(h)://host:port)
-    -Q, --query <QUERY>...                  Specify URL query parameters (ex: -Q token=stuff -Q secret=key)
-    -R, --replay-codes <REPLAY_CODE>...     Status Codes to send through a Replay Proxy when found (default: --status-
-                                            codes value)
-    -P, --replay-proxy <REPLAY_PROXY>       Send only unfiltered requests through a Replay Proxy, instead of all
-                                            requests
-        --resume-from <STATE_FILE>          State file from which to resume a partially complete scan (ex. --resume-from
-                                            ferox-1606586780.state)
-    -L, --scan-limit <SCAN_LIMIT>           Limit total number of concurrent scans (default: 0, i.e. no limit)
-    -s, --status-codes <STATUS_CODE>...     Status Codes to include (allow list) (default: 200 204 301 302 307 308 401
-                                            403 405)
-    -t, --threads <THREADS>                 Number of concurrent threads (default: 50)
-        --time-limit <TIME_SPEC>            Limit total run time of all scans (ex: --time-limit 10m)
-    -T, --timeout <SECONDS>                 Number of seconds before a request times out (default: 7)
-    -u, --url <URL>...                      The target URL(s) (required, unless --stdin used)
-    -a, --user-agent <USER_AGENT>           Sets the User-Agent (default: feroxbuster/VERSION)
-    -w, --wordlist <FILE>                   Path to the wordlist
+        --debug-log <FILE>                        Output file to write log entries (use w/ --json for JSON entries)
+    -d, --depth <RECURSION_DEPTH>
+            Maximum recursion depth, a depth of 0 is infinite recursion (default: 4)
+
+    -x, --extensions <FILE_EXTENSION>...          File extension(s) to search for (ex: -x php -x pdf js)
+    -N, --filter-lines <LINES>...                 Filter out messages of a particular line count (ex: -N 20 -N 31,30)
+    -X, --filter-regex <REGEX>...
+            Filter out messages via regular expression matching on the response's body (ex: -X '^ignore me$')
+
+        --filter-similar-to <UNWANTED_PAGE>...
+            Filter out pages that are similar to the given page (ex. --filter-similar-to http://site.xyz/soft404)
+
+    -S, --filter-size <SIZE>...                   Filter out messages of a particular size (ex: -S 5120 -S 4927,1970)
+    -C, --filter-status <STATUS_CODE>...          Filter out status codes (deny list) (ex: -C 200 -C 401)
+    -W, --filter-words <WORDS>...                 Filter out messages of a particular word count (ex: -W 312 -W 91,82)
+    -H, --headers <HEADER>...                     Specify HTTP headers (ex: -H Header:val 'stuff: things')
+    -o, --output <FILE>                           Output file to write results to (use w/ --json for JSON entries)
+    -p, --proxy <PROXY>
+            Proxy to use for requests (ex: http(s)://host:port, socks5(h)://host:port)
+
+    -Q, --query <QUERY>...                        Specify URL query parameters (ex: -Q token=stuff -Q secret=key)
+    -R, --replay-codes <REPLAY_CODE>...
+            Status Codes to send through a Replay Proxy when found (default: --status-codes value)
+
+    -P, --replay-proxy <REPLAY_PROXY>
+            Send only unfiltered requests through a Replay Proxy, instead of all requests
+
+        --resume-from <STATE_FILE>
+            State file from which to resume a partially complete scan (ex. --resume-from ferox-1606586780.state)
+
+    -L, --scan-limit <SCAN_LIMIT>                 Limit total number of concurrent scans (default: 0, i.e. no limit)
+    -s, --status-codes <STATUS_CODE>...
+            Status Codes to include (allow list) (default: 200 204 301 302 307 308 401 403 405)
+
+    -t, --threads <THREADS>                       Number of concurrent threads (default: 50)
+        --time-limit <TIME_SPEC>                  Limit total run time of all scans (ex: --time-limit 10m)
+    -T, --timeout <SECONDS>                       Number of seconds before a request times out (default: 7)
+    -u, --url <URL>...                            The target URL(s) (required, unless --stdin used)
+    -a, --user-agent <USER_AGENT>                 Sets the User-Agent (default: feroxbuster/VERSION)
+    -w, --wordlist <FILE>                         Path to the wordlist
+
 ```
 
 ## 📊 Scan's Display Explained
@@ -596,9 +610,11 @@ is checked against a list of known filters and either displayed or not according
 
 ### Pause an Active Scan (new in `v1.4.0`)
 
-Scans can be paused and resumed by pressing the ENTER key (shown below)
+**NOTE**: [v1.12.0](#cancel-a-recursive-scan-interactively-new-in-v1120) added an interactive menu to the pause/resume
+functionality.  Active scans can still be paused, however, now you're presented with the option to cancel a scan instead
+of simply seeing a spinner.
 
-![pause-resume-demo](img/pause-resume-demo.gif)
+Scans can be paused and resumed by pressing the ENTER key (~~shown below~~, please see [v1.12.0](#cancel-a-recursive-scan-interactively-new-in-v1120)'s entry for the latest visual representation)
 
 ### Replay Responses to a Proxy based on Status Code (new in `v1.5.0`)
 
@@ -768,6 +784,27 @@ magnitude slower on requests/second).
   - The lack of accuracy with very small responses is considered a fair trade-off for not negatively impacting performance
 - Using a bunch of `--filter-similar-to` values **may** negatively impact performance
 
+### Cancel a Recursive Scan Interactively (new in `v1.12.0`)
+
+Version 1.12.0 expanded the pause/resume functionality introduced in [v1.4.0](#pause-an-active-scan-new-in-v140) by 
+adding an interactive menu from which currently running recursive scans can be cancelled, without affecting the overall scan.  Scans can still be paused indefinitely by pressing `ENTER`, however, the   
+
+Scans that are started via `-u` or passed in through `--stdin` cannot be cancelled, only scans found via `--extract-links` or recursion are eligible.
+
+Below is an example of the Scan Cancel Menu™.
+
+![cancel-menu](img/cancel-menu.png)
+
+Using the menu is pretty simple:
+- Press `ENTER` to view the menu
+- Choose a scan to cancel by entering its scan index (`1`)
+  - more than one scan can be selected by using a comma-separated list (`1,2,3` ... etc)
+- Confirm selections, after which all non-cancelled scans will resume
+
+Here is a short demonstration of cancelling two in-progress scans found via recursion.
+
+![cancel-scan](img/cancel-scan.gif)
+
 ## 🧐 Comparison w/ Similar Tools
 
 There are quite a few similar tools for forced browsing/content discovery. Burp Suite Pro, Dirb, Dirbuster, etc...
@@ -789,7 +826,6 @@ few of the use-cases in which feroxbuster may be a better fit:
 |                                                          | feroxbuster | gobuster | ffuf |
 |------------------------------------------------------------------------------|---|---|---|
 | fast                                                                         | ✔ | ✔ | ✔ |
-| easy to use                                                                  | ✔ | ✔ |   |
 | allows recursion                                                             | ✔ |   | ✔ |
 | can specify query parameters                                                 | ✔ |   | ✔ |
 | SOCKS proxy support                                                          | ✔ |   |   |
@@ -813,6 +849,7 @@ few of the use-cases in which feroxbuster may be a better fit:
 | maximum run time limit (`v1.10.0`)                                           | ✔ |   | ✔ |
 | use robots.txt to increase scan coverage (`v1.10.2`)                         | ✔ |   |   |
 | use example page's response to fuzzily filter similar pages  (`v1.11.0`)     | ✔ |   |   |
+| cancel a recursive scan interactively (`v1.12.0`)                            | ✔ |   |   |
 | **huge** number of other options                                             |   |   | ✔ |
 
 Of note, there's another written-in-rust content discovery tool, [rustbuster](https://github.com/phra/rustbuster). I
