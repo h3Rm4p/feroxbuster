@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/epi052/feroxbuster/actions?query=workflow%3A%22CI+Pipeline%22">
-    <img src="https://img.shields.io/github/workflow/status/epi052/feroxbuster/CI%20Pipeline/master?logo=github">
+    <img src="https://img.shields.io/github/workflow/status/epi052/feroxbuster/CI%20Pipeline/main?logo=github">
   </a>
 
   <a href="https://github.com/epi052/feroxbuster/releases">
@@ -70,6 +70,7 @@ Enumeration.
     - [Snap Install](#snap-install)
     - [Homebrew on MacOS and Linux](#homebrew-on-macos-and-linux)
     - [Cargo Install](#cargo-install)
+    - [Kali Install](#kali-install)
     - [apt Install](#apt-install)
     - [AUR Install](#aur-install)
     - [Docker Install](#docker-install)
@@ -102,6 +103,10 @@ Enumeration.
     - [Extract Links from robots.txt (New in `v1.10.2`)](#extract-links-from-robotstxt-new-in-v1102)
     - [Filter Response by Similarity to A Given Page (fuzzy filter) (new in `v1.11.0`)](#filter-response-by-similarity-to-a-given-page-fuzzy-filter-new-in-v1110)
     - [Cancel a Recursive Scan Interactively (new in `v1.12.0`)](#cancel-a-recursive-scan-interactively-new-in-v1120)
+    - [Limit Number of Requests per Second (Rate Limiting) (new in `v2.0.0`)](#limit-number-of-requests-per-second-rate-limiting-new-in-v200)
+    - [Silence all Output or Be Kinda Quiet (new in `v2.0.0`)](#silence-all-output-or-be-kinda-quiet-new-in-v200)
+    - [Auto-tune or Auto-bail from Scans (new in `v2.1.0`)](#auto-tune-or-auto-bail-from-scans-new-in-v210)
+    - [Run Scans in Parallel (new in `v2.2.0`)](#run-scans-in-parallel-new-in-v220)
 - [Comparison w/ Similar Tools](#-comparison-w-similar-tools)
 - [Common Problems/Issues (FAQ)](#-common-problemsissues-faq)
     - [No file descriptors available](#no-file-descriptors-available)
@@ -190,15 +195,25 @@ brew install feroxbuster
 cargo install feroxbuster
 ```
 
+### Kali Install
+
+🥳 `feroxbuster` was recently added to the official Kali Linux repos 🥳 
+
+If you're using kali, this is the preferred install method. Installing from the repos adds a [**ferox-config.toml**](#ferox-config.toml) in `/etc/feroxbuster/`, adds command completion for bash, fish, and zsh, includes a man page entry, and installs `feroxbuster` itself. 
+
+```
+sudo apt update && sudo apt install -y feroxbuster
+```
+
 ### apt Install
 
 Download `feroxbuster_amd64.deb` from the [Releases](https://github.com/epi052/feroxbuster/releases) section. After
 that, use your favorite package manager to install the `.deb`.
 
 ```
-wget -sLO https://github.com/epi052/feroxbuster/releases/latest/download/feroxbuster_amd64.deb.zip
+curl -sLO https://github.com/epi052/feroxbuster/releases/latest/download/feroxbuster_amd64.deb.zip
 unzip feroxbuster_amd64.deb.zip
-sudo apt install ./feroxbuster_amd64.deb
+sudo apt install ./feroxbuster_*_amd64.deb
 ```
 
 ### AUR Install
@@ -278,6 +293,7 @@ Configuration begins with with the following built-in default values baked into 
 - threads: `50`
 - verbosity: `0` (no logging enabled)
 - scan_limit: `0` (no limit imposed on concurrent scans)
+- rate_limit: `0` (no limit imposed on requests per second)
 - status_codes: `200 204 301 302 307 308 401 403 405`
 - user_agent: `feroxbuster/VERSION`
 - recursion depth: `4`
@@ -366,13 +382,18 @@ A pre-made configuration file with examples of all available settings can be fou
 # status_codes = [200, 500]
 # filter_status = [301]
 # threads = 1
+# parallel = 2
 # timeout = 5
+# auto_tune = true
+# auto_bail = true
 # proxy = "http://127.0.0.1:8080"
 # replay_proxy = "http://127.0.0.1:8081"
 # replay_codes = [200, 302]
 # verbosity = 1
 # scan_limit = 6
+# rate_limit = 250
 # quiet = true
+# silent = true
 # json = true
 # output = "/targets/ellingson_mineral_company/gibson.txt"
 # debug_log = "/var/log/find-the-derp.log"
@@ -420,6 +441,8 @@ USAGE:
 
 FLAGS:
     -f, --add-slash        Append / to each request
+        --auto-bail        Automatically stop scanning when an excessive amount of errors are encountered
+        --auto-tune        Automatically lower scan rate when an excessive amount of errors are encountered
     -D, --dont-filter      Don't auto-filter wildcard responses
     -e, --extract-links    Extract links from response body (html, javascript, etc...); make new requests based on
                            findings (default: false)
@@ -427,8 +450,9 @@ FLAGS:
     -k, --insecure         Disables TLS certificate validation
         --json             Emit JSON logs to --output and --debug-log instead of normal text
     -n, --no-recursion     Do not scan recursively
-    -q, --quiet            Only print URLs; Don't print status codes, response size, running config, etc...
+    -q, --quiet            Hide progress bars and banner (good for tmux windows w/ notifications)
     -r, --redirects        Follow redirects
+        --silent           Only print URLs + turn off logging (good for piping a list of urls to other commands)
         --stdin            Read url(s) from STDIN
     -V, --version          Prints version information
     -v, --verbosity        Increase verbosity level (use -vv or more for greater effect. [CAUTION] 4 -v's is probably
@@ -452,10 +476,16 @@ OPTIONS:
     -W, --filter-words <WORDS>...                 Filter out messages of a particular word count (ex: -W 312 -W 91,82)
     -H, --headers <HEADER>...                     Specify HTTP headers (ex: -H Header:val 'stuff: things')
     -o, --output <FILE>                           Output file to write results to (use w/ --json for JSON entries)
+        --parallel <PARALLEL_SCANS>
+            Run parallel feroxbuster instances (one child process per url passed via stdin)
+
     -p, --proxy <PROXY>
             Proxy to use for requests (ex: http(s)://host:port, socks5(h)://host:port)
 
     -Q, --query <QUERY>...                        Specify URL query parameters (ex: -Q token=stuff -Q secret=key)
+        --rate-limit <RATE_LIMIT>
+            Limit number of requests per second (per directory) (default: 0, i.e. no limit)
+
     -R, --replay-codes <REPLAY_CODE>...
             Status Codes to send through a Replay Proxy when found (default: --status-codes value)
 
@@ -475,7 +505,6 @@ OPTIONS:
     -u, --url <URL>...                            The target URL(s) (required, unless --stdin used)
     -a, --user-agent <USER_AGENT>                 Sets the User-Agent (default: feroxbuster/VERSION)
     -w, --wordlist <FILE>                         Path to the wordlist
-
 ```
 
 ## 📊 Scan's Display Explained
@@ -533,7 +562,7 @@ same goes for urls, headers, status codes, queries, and size filters.
 ### Read urls from STDIN; pipe only resulting urls out to another tool
 
 ```
-cat targets | ./feroxbuster --stdin --quiet -s 200 301 302 --redirects -x js | fff -s 200 -o js-files
+cat targets | ./feroxbuster --stdin --silent -s 200 301 302 --redirects -x js | fff -s 200 -o js-files
 ```
 
 ### Proxy traffic through Burp
@@ -805,6 +834,109 @@ Here is a short demonstration of cancelling two in-progress scans found via recu
 
 ![cancel-scan](img/cancel-scan.gif)
 
+### Limit Number of Requests per Second (Rate Limiting) (new in `v2.0.0`)
+
+Version 2.0.0 added the ability to limit the number of requests per second. One thing to note is that the limit is 
+enforced on a per-directory basis. 
+
+Limit number of requests per second, per directory, to 100 (requests per second will increase by 100 for each active 
+directory found during recursion)
+
+```
+./feroxbuster -u http://localhost --rate-limit 100
+```
+
+Limit number of requests per second to 100 to the target as a whole (only one directory at a time will be scanned, thus
+limiting the number of requests per second overall)
+
+```
+./feroxbuster -u http://localhost --rate-limit 100 --scan-limit 1
+```
+
+![rate-limit](img/rate-limit-demo.gif)
+
+### Silence all Output or Be Kinda Quiet (new in `v2.0.0`)
+
+Version 2.0.0 introduces `--silent` which is almost equivalent to version 1.x.x's `--quiet`.  
+
+#### `--silent`
+
+Good for piping a list of urls to other commands:
+  - disables logging (no error messages to screen)
+  - don't print banner
+  - only display urls during scan
+
+example output:
+```
+https://localhost.com/contact
+https://localhost.com/about
+https://localhost.com/terms
+```
+
+#### `--quiet`
+
+Good for tmux windows that have notifications enabled as the only updates shown by the scan are new valid responses
+and new directories found that are suitable for recursion.
+  - hide progress bars
+  - don't print banner
+
+example output:
+```
+302        0l        0w        0c https://localhost.com/Login
+200      126l      281w     4091c https://localhost.com/maintenance
+200      126l      281w     4092c https://localhost.com/terms
+... more individual entries, followed by the directories being scanned ...
+Scanning: https://localhost.com
+Scanning: https://localhost.com/homepage
+Scanning: https://localhost.com/api
+```
+
+### Auto-tune or Auto-bail from scans (new in `v2.1.0`)
+
+Version 2.1.0 introduces the `--auto-tune` and `--auto-bail` flags. You can think of these flags as Policies. Both actions (tuning and bailing) are triggered by the same criteria (below).  Policies are only enforced after at least 50 requests have been made (or # of threads, if that's > 50).
+
+Policy Enforcement Criteria:
+  - number of general errors (timeouts, etc) is higher than half the number of threads (or at least 25 if threads are lower) (per directory scanned)
+  - 90% of responses are `403|Forbidden` (per directory scanned)
+  - 30% of requests are `429|Too Many Requests` (per directory scanned)
+
+> both demo gifs below use --timeout to overload a single-threaded python web server and elicit timeouts
+
+#### --auto-tune
+
+The AutoTune policy enforces a rate limit on individual directory scans when one of the criteria above is met.  The rate limit self-adjusts every (`timeout / 2`) seconds. If the number of errors have increased during that time, the allowed rate of requests is lowered.  On the other hand, if the number of errors hasn't moved, the allowed rate of requests is increased.  If no additional errors are found after a certain number of checks, the rate limit will be removed completely. 
+
+![auto-tune](img/auto-tune-demo.gif)
+
+#### --auto-bail
+
+The AutoBail policy aborts individual directory scans when one of the criteria above is met.  They just stop getting scanned, no muss, no fuss. 
+
+![auto-bail](img/auto-bail-demo.gif)
+
+### Run Scans in Parallel (new in `v2.2.0`)
+
+Version 2.2.0 introduces the `--parallel` option.  If you're one of those people who use `feroxbuster` to scan 100s of hosts at a time, this is the option for you! `--parallel` spawns a child process per target passed in over stdin (recursive directories are still async within each child).
+
+The number of parallel scans is limited to whatever you pass to `--parallel`. When one child finishes its scan, the next child will be spawned.  
+
+Unfortunately, using `--parallel` limits terminal output such that only discovered URLs are shown. No amount of `-v`'s will help you here. I imagine this isn't too big of a deal, as folks that need `--parallel` probably aren't sitting there watching the output... 🙃
+
+Example Command:
+```
+cat large-target-list | ./feroxbuster --stdin --parallel 10 --extract-links --auto-bail
+```
+
+Resuling Process List (illustrative):
+```
+feroxbuster --stdin --parallel 10
+ \_ feroxbuster --silent --extract-links --auto-bail -u https://target-one
+ \_ feroxbuster --silent --extract-links --auto-bail -u https://target-two
+ \_ feroxbuster --silent --extract-links --auto-bail -u https://target-three
+ \_ ...
+ \_ feroxbuster --silent --extract-links --auto-bail -u https://target-ten
+```
+
 ## 🧐 Comparison w/ Similar Tools
 
 There are quite a few similar tools for forced browsing/content discovery. Burp Suite Pro, Dirb, Dirbuster, etc...
@@ -828,7 +960,7 @@ few of the use-cases in which feroxbuster may be a better fit:
 | fast                                                                         | ✔ | ✔ | ✔ |
 | allows recursion                                                             | ✔ |   | ✔ |
 | can specify query parameters                                                 | ✔ |   | ✔ |
-| SOCKS proxy support                                                          | ✔ |   |   |
+| SOCKS proxy support                                                          | ✔ |   | ✔ |
 | multiple target scan (via stdin or multiple -u)                              | ✔ |   | ✔ |
 | configuration file for default value override                                | ✔ |   | ✔ |
 | can accept urls via STDIN as part of a pipeline                              | ✔ |   | ✔ |
@@ -850,6 +982,11 @@ few of the use-cases in which feroxbuster may be a better fit:
 | use robots.txt to increase scan coverage (`v1.10.2`)                         | ✔ |   |   |
 | use example page's response to fuzzily filter similar pages  (`v1.11.0`)     | ✔ |   |   |
 | cancel a recursive scan interactively (`v1.12.0`)                            | ✔ |   |   |
+| limit number of requests per second (`v2.0.0`)                               | ✔ | ✔ | ✔ |
+| hide progress bars or be silent (or some variation) (`v2.0.0`)               | ✔ | ✔ | ✔ |
+| automatically tune scans based on errors/403s/429s  (`v2.1.0`)               | ✔ |   |   |
+| automatically stop scans based on errors/403s/429s  (`v2.1.0`)               | ✔ |   | ✔ |
+| run scans in parallel (1 process per target) (`v2.2.0`)                      | ✔ |   |   |
 | **huge** number of other options                                             |   |   | ✔ |
 
 Of note, there's another written-in-rust content discovery tool, [rustbuster](https://github.com/phra/rustbuster). I

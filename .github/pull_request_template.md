@@ -7,11 +7,11 @@ Long form explanations of most of the items below can be found in the [CONTRIBUT
 - [ ] Your PR description references the associated issue (i.e. fixes #123456)
 - [ ] Code is in its own branch
 - [ ] Branch name is related to the PR contents
-- [ ] PR targets master
+- [ ] PR targets main
 
 ## Static analysis checks
 - [ ] All rust files are formatted using `cargo fmt`
-- [ ] All `clippy` checks pass when running `cargo clippy --all-targets --all-features -- -D warnings -A clippy::deref_addrof`
+- [ ] All `clippy` checks pass when running `cargo clippy --all-targets --all-features -- -D warnings -A clippy::deref_addrof -A clippy::mutex-atomic`
 - [ ] All existing tests pass
 
 ## Documentation

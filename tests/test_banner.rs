@@ -86,7 +86,7 @@ fn banner_prints_replay_proxy() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + multiple headers
-fn banner_prints_headers() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_headers() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -111,7 +111,6 @@ fn banner_prints_headers() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("mostuff: mothings"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
@@ -161,7 +160,7 @@ fn banner_prints_filter_sizes() {
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + queries
-fn banner_prints_queries() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_queries() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -186,13 +185,12 @@ fn banner_prints_queries() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("stuff=things"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + status codes
-fn banner_prints_status_codes() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_status_codes() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -213,13 +211,12 @@ fn banner_prints_status_codes() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("[201, 301, 401]"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + replay codes
-fn banner_prints_replay_codes() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_replay_codes() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -244,13 +241,12 @@ fn banner_prints_replay_codes() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("[200, 302]"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + output file
-fn banner_prints_output_file() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_output_file() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -270,15 +266,17 @@ fn banner_prints_output_file() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("User-Agent"))
                 .and(predicate::str::contains("Output File"))
                 .and(predicate::str::contains("/super/cool/path"))
+                .and(predicate::str::contains(
+                    "ERROR: Couldn't start /super/cool/path file handler",
+                ))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + insecure
-fn banner_prints_insecure() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_insecure() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -299,13 +297,12 @@ fn banner_prints_insecure() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("true"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + follow redirects
-fn banner_prints_redirects() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_redirects() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -326,13 +323,12 @@ fn banner_prints_redirects() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("true"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + extensions
-fn banner_prints_extensions() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_extensions() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -356,13 +352,12 @@ fn banner_prints_extensions() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("[js, pdf]"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + dont_filter
-fn banner_prints_dont_filter() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_dont_filter() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -383,13 +378,12 @@ fn banner_prints_dont_filter() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("false"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + verbosity=1
-fn banner_prints_verbosity_one() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_verbosity_one() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -410,13 +404,12 @@ fn banner_prints_verbosity_one() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ 1"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + verbosity=2
-fn banner_prints_verbosity_two() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_verbosity_two() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -437,13 +430,12 @@ fn banner_prints_verbosity_two() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ 2"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + verbosity=3
-fn banner_prints_verbosity_three() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_verbosity_three() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -464,13 +456,12 @@ fn banner_prints_verbosity_three() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ 3"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + verbosity=4
-fn banner_prints_verbosity_four() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_verbosity_four() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -491,13 +482,12 @@ fn banner_prints_verbosity_four() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ 4"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + add slash
-fn banner_prints_add_slash() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_add_slash() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -518,13 +508,12 @@ fn banner_prints_add_slash() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("true"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + INFINITE recursion
-fn banner_prints_infinite_depth() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_infinite_depth() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -546,13 +535,12 @@ fn banner_prints_infinite_depth() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("INFINITE"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + recursion depth
-fn banner_prints_recursion_depth() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_recursion_depth() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -574,13 +562,12 @@ fn banner_prints_recursion_depth() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("343214"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + no recursion
-fn banner_prints_no_recursion() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_no_recursion() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -601,13 +588,12 @@ fn banner_prints_no_recursion() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("true"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see nothing
-fn banner_doesnt_print() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_doesnt_print() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -615,14 +601,15 @@ fn banner_doesnt_print() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-q")
         .assert()
         .success()
-        .stderr(predicate::str::is_empty());
-    Ok(())
+        .stderr(predicate::str::contains(
+            "Could not connect to any target provided",
+        ));
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + extract-links
-fn banner_prints_extract_links() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_extract_links() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -643,13 +630,12 @@ fn banner_prints_extract_links() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("true"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + scan-limit
-fn banner_prints_scan_limit() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_scan_limit() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -671,13 +657,12 @@ fn banner_prints_scan_limit() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ 4"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
 /// test allows non-existent wordlist to trigger the banner printing to stderr
 /// expect to see all mandatory prints + filter-status
-fn banner_prints_filter_status() -> Result<(), Box<dyn std::error::Error>> {
+fn banner_prints_filter_status() {
     Command::cargo_bin("feroxbuster")
         .unwrap()
         .arg("--url")
@@ -699,7 +684,6 @@ fn banner_prints_filter_status() -> Result<(), Box<dyn std::error::Error>> {
                 .and(predicate::str::contains("│ [200]"))
                 .and(predicate::str::contains("─┴─")),
         );
-    Ok(())
 }
 
 #[test]
@@ -835,5 +819,156 @@ fn banner_prints_similarity_filter() {
                 .and(predicate::str::contains("Similarity Filter"))
                 .and(predicate::str::contains("│ https://somesite.com"))
                 .and(predicate::str::contains("─┴─")),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see all mandatory prints + rate limit
+fn banner_prints_rate_limit() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg("http://localhost")
+        .arg("--rate-limit")
+        .arg("6735")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .and(predicate::str::contains("Target Url"))
+                .and(predicate::str::contains("http://localhost"))
+                .and(predicate::str::contains("Threads"))
+                .and(predicate::str::contains("Wordlist"))
+                .and(predicate::str::contains("Status Codes"))
+                .and(predicate::str::contains("Timeout (secs)"))
+                .and(predicate::str::contains("User-Agent"))
+                .and(predicate::str::contains("Requests per Second"))
+                .and(predicate::str::contains("│ 6735"))
+                .and(predicate::str::contains("─┴─")),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see all mandatory prints + auto tune
+fn banner_prints_auto_tune() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg("http://localhost")
+        .arg("--auto-tune")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .and(predicate::str::contains("Target Url"))
+                .and(predicate::str::contains("http://localhost"))
+                .and(predicate::str::contains("Threads"))
+                .and(predicate::str::contains("Wordlist"))
+                .and(predicate::str::contains("Status Codes"))
+                .and(predicate::str::contains("Timeout (secs)"))
+                .and(predicate::str::contains("User-Agent"))
+                .and(predicate::str::contains("Auto Tune"))
+                .and(predicate::str::contains("│ true"))
+                .and(predicate::str::contains("─┴─")),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see all mandatory prints + auto bail
+fn banner_prints_auto_bail() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg("http://localhost")
+        .arg("--auto-bail")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .and(predicate::str::contains("Target Url"))
+                .and(predicate::str::contains("http://localhost"))
+                .and(predicate::str::contains("Threads"))
+                .and(predicate::str::contains("Wordlist"))
+                .and(predicate::str::contains("Status Codes"))
+                .and(predicate::str::contains("Timeout (secs)"))
+                .and(predicate::str::contains("User-Agent"))
+                .and(predicate::str::contains("Auto Bail"))
+                .and(predicate::str::contains("│ true"))
+                .and(predicate::str::contains("─┴─")),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see no banner output
+fn banner_doesnt_print_when_silent() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg("http://localhost")
+        .arg("--silent")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .not()
+                .and(predicate::str::contains("Target Url").not())
+                .and(predicate::str::contains("http://localhost").not())
+                .and(predicate::str::contains("Threads").not())
+                .and(predicate::str::contains("Wordlist").not())
+                .and(predicate::str::contains("Status Codes").not())
+                .and(predicate::str::contains("Timeout (secs)").not())
+                .and(predicate::str::contains("User-Agent").not()),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see no banner output
+fn banner_doesnt_print_when_quiet() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg("http://localhost")
+        .arg("--quiet")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .not()
+                .and(predicate::str::contains("Target Url").not())
+                .and(predicate::str::contains("http://localhost").not())
+                .and(predicate::str::contains("Threads").not())
+                .and(predicate::str::contains("Wordlist").not())
+                .and(predicate::str::contains("Status Codes").not())
+                .and(predicate::str::contains("Timeout (secs)").not())
+                .and(predicate::str::contains("User-Agent").not()),
+        );
+}
+
+#[test]
+/// test allows non-existent wordlist to trigger the banner printing to stderr
+/// expect to see nothing as --parallel forces --silent to be true
+fn banner_prints_parallel() {
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--stdin")
+        .arg("--parallel")
+        .arg("4316")
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("─┬─")
+                .not()
+                .and(predicate::str::contains("Target Url").not())
+                .and(predicate::str::contains("Parallel Scans").not())
+                .and(predicate::str::contains("Threads").not())
+                .and(predicate::str::contains("Wordlist").not())
+                .and(predicate::str::contains("Status Codes").not())
+                .and(predicate::str::contains("Timeout (secs)").not())
+                .and(predicate::str::contains("User-Agent").not()),
         );
 }

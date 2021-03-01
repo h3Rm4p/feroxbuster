@@ -16,8 +16,13 @@
 # replay_proxy = "http://127.0.0.1:8081"
 # replay_codes = [200, 302]
 # verbosity = 1
+# parallel = 8
 # scan_limit = 6
+# rate_limit = 250
 # quiet = true
+# silent = true
+# auto_tune = true
+# auto_bail = true
 # json = true
 # output = "/targets/ellingson_mineral_company/gibson.txt"
 # debug_log = "/var/log/find-the-derp.log"
