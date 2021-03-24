@@ -119,8 +119,9 @@ Enumeration.
 
 ### Download a Release
 
-Releases for multiple architectures can be found in the [Releases](https://github.com/epi052/feroxbuster/releases)
-section. The latest release for each of the following systems can be downloaded and executed as shown below.
+Releases for `armv7`, `aarch64`, and an `x86_64 .deb` can be found in the [Releases](https://github.com/epi052/feroxbuster/releases) section.
+
+All other OS/architecture combinations can be installed dynamically using one of the methods shown below.
 
 #### Linux (32 and 64-bit) & MacOS
 
@@ -222,6 +223,14 @@ Install `feroxbuster-git` on Arch Linux with your AUR helper of choice:
 
 ```
 yay -S feroxbuster-git
+```
+
+### BlackArch install
+
+Install `feroxbuster` on BlackArch Linux:
+
+```
+pacman -S feroxbuster
 ```
 
 ### Docker Install
