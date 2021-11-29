@@ -1,6 +1,8 @@
 use clap::{App, Arg, ArgGroup};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::env;
+use std::process;
 
 lazy_static! {
     /// Regex used to validate values passed to --time-limit
@@ -16,7 +18,7 @@ lazy_static! {
 
 /// Create and return an instance of [clap::App](https://docs.rs/clap/latest/clap/struct.App.html), i.e. the Command Line Interface's configuration
 pub fn initialize() -> App<'static, 'static> {
-    App::new("feroxbuster")
+    let mut app = App::new("feroxbuster")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Ben 'epi' Risher (@epi052)")
         .about("A fast, simple, recursive content discovery tool written in Rust")
@@ -191,6 +193,15 @@ pub fn initialize() -> App<'static, 'static> {
                 ),
         )
         .arg(
+            Arg::with_name("random_agent")
+                .short("A")
+                .long("random-agent")
+                .takes_value(false)
+                .help(
+                    "Use a random User-Agent"
+                ),
+        )
+        .arg(
             Arg::with_name("redirects")
                 .short("r")
                 .long("redirects")
@@ -214,6 +225,17 @@ pub fn initialize() -> App<'static, 'static> {
                 .use_delimiter(true)
                 .help(
                     "File extension(s) to search for (ex: -x php -x pdf js)",
+                ),
+        )
+        .arg(
+            Arg::with_name("url_denylist")
+                .long("dont-scan")
+                .value_name("URL")
+                .takes_value(true)
+                .multiple(true)
+                .use_delimiter(true)
+                .help(
+                    "URL(s) or Regex Pattern(s) to exclude from recursion/scans",
                 ),
         )
         .arg(
@@ -252,7 +274,6 @@ pub fn initialize() -> App<'static, 'static> {
                 .short("f")
                 .long("add-slash")
                 .takes_value(false)
-                .conflicts_with("extensions")
                 .help("Append / to each request")
         )
         .arg(
@@ -410,7 +431,20 @@ EXAMPLES:
 
     Ludicrous speed... go!
         ./feroxbuster -u http://127.1 -t 200
-    "#)
+    "#);
+
+    for arg in env::args() {
+        // secure-77 noticed that when an incorrect flag/option is used, the short help message is printed
+        // which is fine, but if you add -h|--help, it still errors out on the bad flag/option,
+        // never showing the full help message. This code addresses that behavior
+        if arg == "--help" || arg == "-h" {
+            app.print_long_help().unwrap();
+            println!(); // just a newline to mirror original --help output
+            process::exit(0);
+        }
+    }
+
+    app
 }
 
 /// Validate that a string is formatted as a number followed by s, m, h, or d (10d, 30s, etc...)
@@ -432,7 +466,7 @@ mod tests {
     use super::*;
 
     #[test]
-    /// initalize parser, expect a clap::App returned
+    /// initialize parser, expect a clap::App returned
     fn parser_initialize_gives_defaults() {
         let app = initialize();
         assert_eq!(app.get_name(), "feroxbuster");

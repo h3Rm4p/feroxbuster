@@ -1,4 +1,5 @@
 use super::*;
+use crate::utils::should_deny_url;
 use crate::{
     client,
     event_handlers::{
@@ -53,13 +54,19 @@ pub struct Extractor<'a> {
 
 /// Extractor implementation
 impl<'a> Extractor<'a> {
-    /// business logic that handles getting links from a normal http body response
-    pub async fn extract(&self) -> Result<()> {
-        let links = match self.target {
-            ExtractionTarget::ResponseBody => self.extract_from_body().await?,
-            ExtractionTarget::RobotsTxt => self.extract_from_robots().await?,
-        };
+    /// perform extraction from the given target and return any links found
+    pub async fn extract(&self) -> Result<HashSet<String>> {
+        log::trace!("enter: extract (this fn has associated trace exit msg)");
+        match self.target {
+            ExtractionTarget::ResponseBody => Ok(self.extract_from_body().await?),
+            ExtractionTarget::RobotsTxt => Ok(self.extract_from_robots().await?),
+        }
+    }
 
+    /// given a set of links from a normal http body response, task the request handler to make
+    /// the requests
+    pub async fn request_links(&self, links: HashSet<String>) -> Result<()> {
+        log::trace!("enter: request_links({:?})", links);
         let recursive = if self.handles.config.no_recursion {
             RecursionStatus::NotRecursive
         } else {
@@ -121,6 +128,7 @@ impl<'a> Extractor<'a> {
                 rx.await?;
             }
         }
+        log::trace!("exit: request_links");
         Ok(())
     }
 
@@ -141,7 +149,7 @@ impl<'a> Extractor<'a> {
 
         let body = self.response.unwrap().text();
 
-        for capture in self.links_regex.captures_iter(&body) {
+        for capture in self.links_regex.captures_iter(body) {
             // remove single & double quotes from both ends of the capture
             // capture[0] is the entire match, additional capture groups start at [1]
             let link = capture[0].trim_matches(|c| c == '\'' || c == '"');
@@ -267,7 +275,7 @@ impl<'a> Extractor<'a> {
         };
 
         let new_url = old_url
-            .join(&link)
+            .join(link)
             .with_context(|| format!("Could not join {} with {}", old_url, link))?;
 
         links.insert(new_url.to_string());
@@ -289,10 +297,10 @@ impl<'a> Extractor<'a> {
     pub(super) async fn request_link(&self, url: &str) -> Result<FeroxResponse> {
         log::trace!("enter: request_link({})", url);
 
-        let ferox_url = FeroxUrl::from_string(&url, self.handles.clone());
+        let ferox_url = FeroxUrl::from_string(url, self.handles.clone());
 
         // create a url based on the given command line options
-        let new_url = ferox_url.format(&"", None)?;
+        let new_url = ferox_url.format("", None)?;
 
         let scanned_urls = self.handles.ferox_scans()?;
 
@@ -300,6 +308,19 @@ impl<'a> Extractor<'a> {
             //we've seen the url before and don't need to scan again
             log::trace!("exit: request_link -> None");
             bail!("previously seen url");
+        }
+
+        if (!self.handles.config.url_denylist.is_empty()
+            || !self.handles.config.regex_denylist.is_empty())
+            && should_deny_url(&new_url, self.handles.clone())?
+        {
+            // can't allow a denied url to be requested
+            bail!(
+                "prevented request to {} due to {:?} || {:?}",
+                url,
+                self.handles.config.url_denylist,
+                self.handles.config.regex_denylist,
+            );
         }
 
         // make the request and store the response
@@ -332,7 +353,7 @@ impl<'a> Extractor<'a> {
             if let Some(new_path) = capture.name("url_path") {
                 let mut new_url = Url::parse(&self.url)?;
                 new_url.set_path(new_path.as_str());
-                if self.add_all_sub_paths(&new_url.path(), &mut links).is_err() {
+                if self.add_all_sub_paths(new_url.path(), &mut links).is_err() {
                     log::warn!("could not add sub-paths from {} to {:?}", new_url, links);
                 }
             }
@@ -383,6 +404,7 @@ impl<'a> Extractor<'a> {
             &client,
             &url,
             self.handles.config.output_level,
+            &self.handles.config,
             self.handles.stats.tx.clone(),
         )
         .await?;
@@ -391,7 +413,7 @@ impl<'a> Extractor<'a> {
             FeroxResponse::from(response, true, self.handles.config.output_level).await;
 
         log::trace!("exit: get_robots_file -> {}", ferox_response);
-        return Ok(ferox_response);
+        Ok(ferox_response)
     }
 
     /// update total number of links extracted and expected responses

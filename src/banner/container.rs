@@ -50,6 +50,9 @@ pub struct Banner {
     /// represents Configuration.user_agent
     user_agent: BannerEntry,
 
+    /// represents Configuration.random_agent
+    random_agent: BannerEntry,
+
     /// represents Configuration.config
     config: BannerEntry,
 
@@ -134,6 +137,9 @@ pub struct Banner {
     /// represents Configuration.auto_bail
     auto_bail: BannerEntry,
 
+    /// represents Configuration.url_denylist
+    url_denylist: Vec<BannerEntry>,
+
     /// current version of feroxbuster
     pub(super) version: String,
 
@@ -146,6 +152,7 @@ impl Banner {
     /// Create a new Banner from a Configuration and live targets
     pub fn new(tgts: &[String], config: &Configuration) -> Self {
         let mut targets = Vec::new();
+        let mut url_denylist = Vec::new();
         let mut code_filters = Vec::new();
         let mut replay_codes = Vec::new();
         let mut headers = Vec::new();
@@ -158,6 +165,22 @@ impl Banner {
 
         for target in tgts {
             targets.push(BannerEntry::new("🎯", "Target Url", target));
+        }
+
+        for denied_url in &config.url_denylist {
+            url_denylist.push(BannerEntry::new(
+                "🚫",
+                "Don't Scan Url",
+                denied_url.as_str(),
+            ));
+        }
+
+        for denied_regex in &config.regex_denylist {
+            url_denylist.push(BannerEntry::new(
+                "🚫",
+                "Don't Scan Regex",
+                denied_regex.as_str(),
+            ));
         }
 
         let mut codes = vec![];
@@ -268,6 +291,7 @@ impl Banner {
         let wordlist = BannerEntry::new("📖", "Wordlist", &config.wordlist);
         let timeout = BannerEntry::new("💥", "Timeout (secs)", &config.timeout.to_string());
         let user_agent = BannerEntry::new("🦡", "User-Agent", &config.user_agent);
+        let random_agent = BannerEntry::new("🦡", "User-Agent", "Random");
         let extract_links =
             BannerEntry::new("🔎", "Extract Links", &config.extract_links.to_string());
         let json = BannerEntry::new("🧔", "JSON Output", &config.json.to_string());
@@ -296,6 +320,7 @@ impl Banner {
             filter_status,
             timeout,
             user_agent,
+            random_agent,
             auto_bail,
             auto_tune,
             proxy,
@@ -323,6 +348,7 @@ impl Banner {
             rate_limit,
             scan_limit,
             time_limit,
+            url_denylist,
             config: cfg,
             version: VERSION.to_string(),
             update_status: UpdateStatus::Unknown,
@@ -413,6 +439,10 @@ by Ben "epi" Risher {}                 ver: {}"#,
             writeln!(&mut writer, "{}", target)?;
         }
 
+        for denied_url in &self.url_denylist {
+            writeln!(&mut writer, "{}", denied_url)?;
+        }
+
         writeln!(&mut writer, "{}", self.threads)?;
         writeln!(&mut writer, "{}", self.wordlist)?;
         writeln!(&mut writer, "{}", self.status_codes)?;
@@ -424,7 +454,12 @@ by Ben "epi" Risher {}                 ver: {}"#,
         }
 
         writeln!(&mut writer, "{}", self.timeout)?;
-        writeln!(&mut writer, "{}", self.user_agent)?;
+
+        if config.random_agent {
+            writeln!(&mut writer, "{}", self.random_agent)?;
+        } else {
+            writeln!(&mut writer, "{}", self.user_agent)?;
+        }
 
         // followed by the maybe printed or variably displayed values
         if !config.config.is_empty() {

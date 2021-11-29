@@ -54,8 +54,8 @@ fn setup_extractor(target: ExtractionTarget, scanned_urls: Arc<FeroxScans>) -> E
 /// in the expected array
 fn extractor_get_sub_paths_from_path_with_multiple_paths() {
     let path = "homepage/assets/img/icons/handshake.svg";
-    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(&path);
-    let b_paths = BODY_EXT.get_sub_paths_from_path(&path);
+    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(path);
+    let b_paths = BODY_EXT.get_sub_paths_from_path(path);
     let expected = vec![
         "homepage/",
         "homepage/assets/",
@@ -67,8 +67,8 @@ fn extractor_get_sub_paths_from_path_with_multiple_paths() {
     assert_eq!(r_paths.len(), expected.len());
     assert_eq!(b_paths.len(), expected.len());
     for expected_path in expected {
-        assert_eq!(r_paths.contains(&expected_path.to_string()), true);
-        assert_eq!(b_paths.contains(&expected_path.to_string()), true);
+        assert!(r_paths.contains(&expected_path.to_string()));
+        assert!(b_paths.contains(&expected_path.to_string()));
     }
 }
 
@@ -78,15 +78,15 @@ fn extractor_get_sub_paths_from_path_with_multiple_paths() {
 /// returned
 fn extractor_get_sub_paths_from_path_with_enclosing_slashes() {
     let path = "/homepage/assets/";
-    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(&path);
-    let b_paths = BODY_EXT.get_sub_paths_from_path(&path);
+    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(path);
+    let b_paths = BODY_EXT.get_sub_paths_from_path(path);
     let expected = vec!["homepage/", "homepage/assets"];
 
     assert_eq!(r_paths.len(), expected.len());
     assert_eq!(b_paths.len(), expected.len());
     for expected_path in expected {
-        assert_eq!(r_paths.contains(&expected_path.to_string()), true);
-        assert_eq!(b_paths.contains(&expected_path.to_string()), true);
+        assert!(r_paths.contains(&expected_path.to_string()));
+        assert!(b_paths.contains(&expected_path.to_string()));
     }
 }
 
@@ -95,15 +95,15 @@ fn extractor_get_sub_paths_from_path_with_enclosing_slashes() {
 /// included
 fn extractor_get_sub_paths_from_path_with_only_a_word() {
     let path = "homepage";
-    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(&path);
-    let b_paths = BODY_EXT.get_sub_paths_from_path(&path);
+    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(path);
+    let b_paths = BODY_EXT.get_sub_paths_from_path(path);
     let expected = vec!["homepage"];
 
     assert_eq!(r_paths.len(), expected.len());
     assert_eq!(b_paths.len(), expected.len());
     for expected_path in expected {
-        assert_eq!(r_paths.contains(&expected_path.to_string()), true);
-        assert_eq!(b_paths.contains(&expected_path.to_string()), true);
+        assert!(r_paths.contains(&expected_path.to_string()));
+        assert!(b_paths.contains(&expected_path.to_string()));
     }
 }
 
@@ -111,15 +111,15 @@ fn extractor_get_sub_paths_from_path_with_only_a_word() {
 /// extract sub paths from the given url fragment; expect 1 sub path, forward slash removed
 fn extractor_get_sub_paths_from_path_with_an_absolute_word() {
     let path = "/homepage";
-    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(&path);
-    let b_paths = BODY_EXT.get_sub_paths_from_path(&path);
+    let r_paths = ROBOTS_EXT.get_sub_paths_from_path(path);
+    let b_paths = BODY_EXT.get_sub_paths_from_path(path);
     let expected = vec!["homepage"];
 
     assert_eq!(r_paths.len(), expected.len());
     assert_eq!(b_paths.len(), expected.len());
     for expected_path in expected {
-        assert_eq!(r_paths.contains(&expected_path.to_string()), true);
-        assert_eq!(b_paths.contains(&expected_path.to_string()), true);
+        assert!(r_paths.contains(&expected_path.to_string()));
+        assert!(b_paths.contains(&expected_path.to_string()));
     }
 }
 
@@ -211,16 +211,23 @@ async fn extractor_get_links_with_absolute_url_that_differs_from_target_domain()
     let mock = srv.mock(|when, then| {
         when.method(GET).path("/some-path");
         then.status(200).body(
-            "\"http://defintely.not.a.thing.probably.com/homepage/assets/img/icons/handshake.svg\"",
+            "\"http://definitely.not.a.thing.probably.com/homepage/assets/img/icons/handshake.svg\"",
         );
     });
 
     let client = Client::new();
     let url = Url::parse(&srv.url("/some-path")).unwrap();
+    let config = Configuration::new().unwrap();
 
-    let response = make_request(&client, &url, OutputLevel::Default, tx_stats.clone())
-        .await
-        .unwrap();
+    let response = make_request(
+        &client,
+        &url,
+        OutputLevel::Default,
+        &config,
+        tx_stats.clone(),
+    )
+    .await
+    .unwrap();
     let (handles, _rx) = Handles::for_testing(None, None);
 
     let handles = Arc::new(handles);

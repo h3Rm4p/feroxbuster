@@ -156,7 +156,15 @@ impl HeuristicTests {
         log::trace!("enter: make_wildcard_request({}, {})", target, length);
 
         let unique_str = self.unique_string(length);
-        let nonexistent_url = target.format(&unique_str, None)?;
+
+        // To take care of slash when needed
+        let slash = if self.handles.config.add_slash {
+            Some("/")
+        } else {
+            None
+        };
+
+        let nonexistent_url = target.format(&unique_str, slash)?;
 
         let response = logged_request(&nonexistent_url.to_owned(), self.handles.clone()).await?;
 
@@ -207,7 +215,7 @@ impl HeuristicTests {
         let mut good_urls = vec![];
 
         for target_url in target_urls {
-            let url = FeroxUrl::from_string(&target_url, self.handles.clone());
+            let url = FeroxUrl::from_string(target_url, self.handles.clone());
             let request = skip_fail!(url.format("", None));
 
             let result = logged_request(&request, self.handles.clone()).await;

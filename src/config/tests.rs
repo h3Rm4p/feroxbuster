@@ -1,6 +1,8 @@
 use super::utils::*;
 use super::*;
 use crate::{traits::FeroxSerialize, DEFAULT_CONFIG_NAME};
+use regex::Regex;
+use reqwest::Url;
 use std::{collections::HashMap, fs::write};
 use tempfile::TempDir;
 
@@ -29,6 +31,8 @@ fn setup_config_test() -> Configuration {
             redirects = true
             insecure = true
             extensions = ["html", "php", "js"]
+            url_denylist = ["http://dont-scan.me", "https://also-not.me"]
+            regex_denylist = ["/deny.*"]
             headers = {stuff = "things", mostuff = "mothings"}
             queries = [["name","value"], ["rick", "astley"]]
             no_recursion = true
@@ -72,24 +76,27 @@ fn default_configuration() {
     assert_eq!(config.timeout, timeout());
     assert_eq!(config.verbosity, 0);
     assert_eq!(config.scan_limit, 0);
-    assert_eq!(config.silent, false);
-    assert_eq!(config.quiet, false);
+    assert!(!config.silent);
+    assert!(!config.quiet);
     assert_eq!(config.output_level, OutputLevel::Default);
-    assert_eq!(config.dont_filter, false);
-    assert_eq!(config.auto_tune, false);
-    assert_eq!(config.auto_bail, false);
+    assert!(!config.dont_filter);
+    assert!(!config.auto_tune);
+    assert!(!config.auto_bail);
     assert_eq!(config.requester_policy, RequesterPolicy::Default);
-    assert_eq!(config.no_recursion, false);
-    assert_eq!(config.json, false);
-    assert_eq!(config.save_state, true);
-    assert_eq!(config.stdin, false);
-    assert_eq!(config.add_slash, false);
-    assert_eq!(config.redirects, false);
-    assert_eq!(config.extract_links, false);
-    assert_eq!(config.insecure, false);
+    assert!(!config.no_recursion);
+    assert!(!config.random_agent);
+    assert!(!config.json);
+    assert!(config.save_state);
+    assert!(!config.stdin);
+    assert!(!config.add_slash);
+    assert!(!config.redirects);
+    assert!(!config.extract_links);
+    assert!(!config.insecure);
+    assert!(config.regex_denylist.is_empty());
     assert_eq!(config.queries, Vec::new());
-    assert_eq!(config.extensions, Vec::<String>::new());
     assert_eq!(config.filter_size, Vec::<u64>::new());
+    assert_eq!(config.extensions, Vec::<String>::new());
+    assert_eq!(config.url_denylist, Vec::<Url>::new());
     assert_eq!(config.filter_regex, Vec::<String>::new());
     assert_eq!(config.filter_similar, Vec::<String>::new());
     assert_eq!(config.filter_word_count, Vec::<usize>::new());
@@ -186,35 +193,35 @@ fn config_reads_replay_proxy() {
 /// parse the test config and see that the value parsed is correct
 fn config_reads_silent() {
     let config = setup_config_test();
-    assert_eq!(config.silent, true);
+    assert!(config.silent);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_quiet() {
     let config = setup_config_test();
-    assert_eq!(config.quiet, true);
+    assert!(config.quiet);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_json() {
     let config = setup_config_test();
-    assert_eq!(config.json, true);
+    assert!(config.json);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_auto_bail() {
     let config = setup_config_test();
-    assert_eq!(config.auto_bail, true);
+    assert!(config.auto_bail);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_auto_tune() {
     let config = setup_config_test();
-    assert_eq!(config.auto_tune, true);
+    assert!(config.auto_tune);
 }
 
 #[test]
@@ -235,49 +242,49 @@ fn config_reads_output() {
 /// parse the test config and see that the value parsed is correct
 fn config_reads_redirects() {
     let config = setup_config_test();
-    assert_eq!(config.redirects, true);
+    assert!(config.redirects);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_insecure() {
     let config = setup_config_test();
-    assert_eq!(config.insecure, true);
+    assert!(config.insecure);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_no_recursion() {
     let config = setup_config_test();
-    assert_eq!(config.no_recursion, true);
+    assert!(config.no_recursion);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_stdin() {
     let config = setup_config_test();
-    assert_eq!(config.stdin, true);
+    assert!(config.stdin);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_dont_filter() {
     let config = setup_config_test();
-    assert_eq!(config.dont_filter, true);
+    assert!(config.dont_filter);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_add_slash() {
     let config = setup_config_test();
-    assert_eq!(config.add_slash, true);
+    assert!(config.add_slash);
 }
 
 #[test]
 /// parse the test config and see that the value parsed is correct
 fn config_reads_extract_links() {
     let config = setup_config_test();
-    assert_eq!(config.extract_links, true);
+    assert!(config.extract_links);
 }
 
 #[test]
@@ -285,6 +292,29 @@ fn config_reads_extract_links() {
 fn config_reads_extensions() {
     let config = setup_config_test();
     assert_eq!(config.extensions, vec!["html", "php", "js"]);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_regex_denylist() {
+    let config = setup_config_test();
+    assert_eq!(
+        config.regex_denylist[0].as_str(),
+        Regex::new("/deny.*").unwrap().as_str()
+    );
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_url_denylist() {
+    let config = setup_config_test();
+    assert_eq!(
+        config.url_denylist,
+        vec![
+            Url::parse("http://dont-scan.me").unwrap(),
+            Url::parse("https://also-not.me").unwrap(),
+        ]
+    );
 }
 
 #[test]
@@ -333,7 +363,7 @@ fn config_reads_filter_status() {
 /// parse the test config and see that the value parsed is correct
 fn config_reads_save_state() {
     let config = setup_config_test();
-    assert_eq!(config.save_state, false);
+    assert!(!config.save_state);
 }
 
 #[test]
@@ -369,6 +399,12 @@ fn config_reads_queries() {
         ("rick".to_string(), "astley".to_string()),
     ];
     assert_eq!(config.queries, queries);
+}
+
+#[test]
+fn config_default_not_random_agent() {
+    let config = setup_config_test();
+    assert!(!config.random_agent);
 }
 
 #[test]

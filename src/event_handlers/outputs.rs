@@ -213,8 +213,9 @@ impl TermOutHandler {
                         // should be replayed; not using logged_request due to replay proxy client
                         make_request(
                             self.config.replay_client.as_ref().unwrap(),
-                            &resp.url(),
+                            resp.url(),
                             self.config.output_level,
+                            &self.config,
                             tx_stats.clone(),
                         )
                         .await

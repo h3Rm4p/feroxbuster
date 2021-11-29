@@ -1,6 +1,6 @@
 [package]
 name = "feroxbuster"
-version = "2.2.4"
+version = "2.4.0"
 authors = ["Ben 'epi' Risher <epibar052@gmail.com>"]
 license = "MIT"
 edition = "2018"
@@ -19,37 +19,40 @@ maintenance = { status = "actively-developed" }
 clap = "2.33"
 regex = "1"
 lazy_static = "1.4"
+dirs = "4.0"
 
 [dependencies]
-futures = { version = "0.3.14"}
-tokio = { version = "1.5.0", features = ["full"] }
-tokio-util = {version = "0.6.6", features = ["codec"]}
+futures = { version = "0.3"}
+tokio = { version = "1.11", features = ["full"] }
+tokio-util = {version = "0.6", features = ["codec"]}
 log = "0.4"
-env_logger = "0.8.3"
+env_logger = "0.9"
 reqwest = { version = "0.11", features = ["socks"] }
+url = { version = "2.2", features = ["serde"]}  # uses feature unification to add 'serde' to reqwest::Url
+serde_regex = "1.1"
 clap = "2.33"
 lazy_static = "1.4"
 toml = "0.5"
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0.64"
+serde_json = "1.0"
 uuid = { version = "0.8", features = ["v4"] }
 indicatif = "0.15"
-console = "0.14"
+console = "0.15"
 openssl = { version = "0.10", features = ["vendored"] }
-dirs = "3.0"
+dirs = "4.0"
 regex = "1"
-crossterm = "0.19"
-rlimit = "0.5.4"
-ctrlc = "3.1.9"
+crossterm = "0.20"
+rlimit = "0.6"
+ctrlc = "3.2"
 fuzzyhash = "0.2.1"
 anyhow = "1.0"
 leaky-bucket = "0.10.0"
 
 [dev-dependencies]
 tempfile = "3.1"
-httpmock = "0.5.8"
-assert_cmd = "1.0.3"
-predicates = "1.0.8"
+httpmock = "0.6.2"
+assert_cmd = "2.0"
+predicates = "2.0"
 
 [profile.release]
 lto = true
