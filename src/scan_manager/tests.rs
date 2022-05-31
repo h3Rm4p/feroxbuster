@@ -1,4 +1,8 @@
 use super::*;
+use crate::filters::{
+    FeroxFilters, LinesFilter, RegexFilter, SimilarityFilter, SizeFilter, StatusCodeFilter,
+    WordsFilter,
+};
 use crate::{
     config::{Configuration, OutputLevel},
     event_handlers::Handles,
@@ -6,10 +10,11 @@ use crate::{
     scanner::RESPONSES,
     statistics::Stats,
     traits::FeroxSerialize,
-    SLEEP_DURATION, VERSION,
+    SIMILARITY_THRESHOLD, SLEEP_DURATION, VERSION,
 };
 use indicatif::ProgressBar;
 use predicates::prelude::*;
+use regex::Regex;
 use std::sync::{atomic::Ordering, Arc};
 use std::thread::sleep;
 use std::time::Instant;
@@ -31,6 +36,7 @@ fn default_scantype_is_file() {
 async fn scanner_pause_scan_with_finished_spinner() {
     let now = time::Instant::now();
     let urls = FeroxScans::default();
+    let handles = Arc::new(Handles::for_testing(None, None).0);
 
     PAUSE_SCAN.store(true, Ordering::Relaxed);
 
@@ -41,7 +47,7 @@ async fn scanner_pause_scan_with_finished_spinner() {
         PAUSE_SCAN.store(false, Ordering::Relaxed);
     });
 
-    urls.pause(false).await;
+    urls.pause(false, handles).await;
 
     assert!(now.elapsed() > expected);
 }
@@ -303,7 +309,7 @@ fn ferox_scans_serialize() {
 #[test]
 /// given a FeroxResponses, test that it serializes into the proper JSON entry
 fn ferox_responses_serialize() {
-    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","original_url":"https://nerdcore.com","path":"/css","wildcard":true,"status":301,"content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"}}"#;
+    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","original_url":"https://nerdcore.com","path":"/css","wildcard":true,"status":301,"method":"GET","content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"},"extension":""}"#;
     let response: FeroxResponse = serde_json::from_str(json_response).unwrap();
 
     let responses = FeroxResponses::default();
@@ -321,7 +327,7 @@ fn ferox_responses_serialize() {
 /// given a FeroxResponse, test that it serializes into the proper JSON entry
 fn ferox_response_serialize_and_deserialize() {
     // deserialize
-    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","original_url":"https://nerdcore.com","path":"/css","wildcard":true,"status":301,"content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"}}"#;
+    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","original_url":"https://nerdcore.com","path":"/css","wildcard":true,"status":301,"method":"GET","content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"},"extension":""}"#;
     let response: FeroxResponse = serde_json::from_str(json_response).unwrap();
 
     assert_eq!(response.url().as_str(), "https://nerdcore.com/css");
@@ -351,20 +357,60 @@ fn feroxstates_feroxserialize_implementation() {
     );
     let ferox_scans = FeroxScans::default();
     let saved_id = ferox_scan.id.clone();
+
     ferox_scans.insert(ferox_scan);
 
-    let config = Configuration::new().unwrap();
+    ferox_scans
+        .collected_extensions
+        .write()
+        .unwrap()
+        .insert(String::from("php"));
+
+    let mut config = Configuration::new().unwrap();
+
+    config.collect_extensions = true;
+
     let stats = Arc::new(Stats::new(config.json));
 
-    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","path":"/css","wildcard":true,"status":301,"content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"}}"#;
+    let json_response = r#"{"type":"response","url":"https://nerdcore.com/css","path":"/css","wildcard":true,"status":301,"content_length":173,"line_count":10,"word_count":16,"headers":{"server":"nginx/1.16.1"},"extension":""}"#;
     let response: FeroxResponse = serde_json::from_str(json_response).unwrap();
     RESPONSES.insert(response);
 
+    let filters = FeroxFilters::default();
+    filters
+        .push(Box::new(StatusCodeFilter { filter_code: 100 }))
+        .unwrap();
+    filters
+        .push(Box::new(WordsFilter { word_count: 200 }))
+        .unwrap();
+    filters
+        .push(Box::new(SizeFilter {
+            content_length: 300,
+        }))
+        .unwrap();
+    filters
+        .push(Box::new(LinesFilter { line_count: 400 }))
+        .unwrap();
+    filters
+        .push(Box::new(RegexFilter {
+            raw_string: ".*".to_string(),
+            compiled: Regex::new(".*").unwrap(),
+        }))
+        .unwrap();
+    filters
+        .push(Box::new(SimilarityFilter {
+            hash: "3:YKEpn:Yfp".to_string(),
+            threshold: SIMILARITY_THRESHOLD,
+            original_url: "http://localhost:12345/".to_string(),
+        }))
+        .unwrap();
+
     let ferox_state = FeroxState::new(
         Arc::new(ferox_scans),
-        Arc::new(Configuration::new().unwrap()),
+        Arc::new(config),
         &RESPONSES,
         stats,
+        Arc::new(filters),
     );
 
     let expected_strs = predicates::str::contains("scans: FeroxScans").and(
@@ -372,12 +418,16 @@ fn feroxstates_feroxserialize_implementation() {
             .and(predicate::str::contains("responses: FeroxResponses"))
             .and(predicate::str::contains("nerdcore.com"))
             .and(predicate::str::contains("/css"))
-            .and(predicate::str::contains("https://spiritanimal.com")),
+            .and(predicate::str::contains("https://spiritanimal.com"))
+            .and(predicate::str::contains("php")),
     );
 
     assert!(expected_strs.eval(&ferox_state.as_str()));
 
     let json_state = ferox_state.as_json().unwrap();
+
+    println!("echo '{}'|jq", json_state); // for debugging, if the test fails, can see what's going on
+
     for expected in [
         r#""scans""#,
         &format!(r#""id":"{}""#, saved_id),
@@ -402,6 +452,7 @@ fn feroxstates_feroxserialize_implementation() {
         r#""quiet":false"#,
         r#""auto_bail":false"#,
         r#""auto_tune":false"#,
+        r#""force_recursion":false"#,
         r#""json":false"#,
         r#""output":"""#,
         r#""debug_log":"""#,
@@ -410,6 +461,8 @@ fn feroxstates_feroxserialize_implementation() {
         r#""redirects":false"#,
         r#""insecure":false"#,
         r#""extensions":[]"#,
+        r#""methods":["GET"],"#,
+        r#""data":[]"#,
         r#""headers""#,
         r#""queries":[]"#,
         r#""no_recursion":false"#,
@@ -437,19 +490,24 @@ fn feroxstates_feroxserialize_implementation() {
         r#""path":"/css""#,
         r#""wildcard":true"#,
         r#""status":301"#,
+        r#""method":"GET""#,
         r#""content_length":173"#,
         r#""line_count":10"#,
         r#""word_count":16"#,
         r#""headers""#,
         r#""server":"nginx/1.16.1"#,
+        r#""collect_extensions":true"#,
+        r#""collect_backups":false"#,
+        r#""collect_words":false"#,
+        r#""filters":[{"filter_code":100},{"word_count":200},{"content_length":300},{"line_count":400},{"compiled":".*","raw_string":".*"},{"hash":"3:YKEpn:Yfp","threshold":95,"original_url":"http://localhost:12345/"}]"#,
+        r#""collected_extensions":["php"]"#,
+        r#""dont_collect":["tif","tiff","ico","cur","bmp","webp","svg","png","jpg","jpeg","jfif","gif","avif","apng","pjpeg","pjp","mov","wav","mpg","mpeg","mp3","mp4","m4a","m4p","m4v","ogg","webm","ogv","oga","flac","aac","3gp","css","zip","xls","xml","gz","tgz"]"#,
     ]
     .iter()
     {
         assert!(
-            predicates::str::contains(*expected).eval(&json_state),
-            "{}",
-            expected
-        )
+            predicates::str::contains(*expected).eval(&json_state)
+        );
     }
 }
 
@@ -572,7 +630,7 @@ async fn ferox_scan_abort() {
 /// and their correctness can be verified easily manually; just calling for now
 fn menu_print_header_and_footer() {
     let menu = Menu::new();
-    let menu_cmd_1 = MenuCmd::Add(String::from("http://localhost"));
+    let menu_cmd_1 = MenuCmd::AddUrl(String::from("http://localhost"));
     let menu_cmd_2 = MenuCmd::Cancel(vec![0], false);
     let menu_cmd_res_1 = MenuCmdResult::Url(String::from("http://localhost"));
     let menu_cmd_res_2 = MenuCmdResult::NumCancelled(2);
@@ -587,8 +645,8 @@ fn menu_print_header_and_footer() {
     menu.show_progress_bars();
 }
 
-#[test]
 /// ensure command parsing from user input results int he correct MenuCmd returned
+#[test]
 fn menu_get_command_input_from_user_returns_cancel() {
     let menu = Menu::new();
 
@@ -616,8 +674,8 @@ fn menu_get_command_input_from_user_returns_cancel() {
     }
 }
 
-#[test]
 /// ensure command parsing from user input results int he correct MenuCmd returned
+#[test]
 fn menu_get_command_input_from_user_returns_add() {
     let menu = Menu::new();
 
@@ -627,9 +685,9 @@ fn menu_get_command_input_from_user_returns_add() {
 
         if cmd != "None" {
             let result = menu.get_command_input_from_user(&full_cmd).unwrap();
-            assert!(matches!(result, MenuCmd::Add(_)));
+            assert!(matches!(result, MenuCmd::AddUrl(_)));
 
-            if let MenuCmd::Add(url) = result {
+            if let MenuCmd::AddUrl(url) = result {
                 assert_eq!(url, test_url);
             }
         } else {

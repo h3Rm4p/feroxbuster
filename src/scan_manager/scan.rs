@@ -33,7 +33,7 @@ pub struct FeroxScan {
     pub(super) url: String,
 
     /// The type of scan
-    pub(super) scan_type: ScanType,
+    pub scan_type: ScanType,
 
     /// The order in which the scan was received
     pub(crate) scan_order: ScanOrder,
@@ -42,7 +42,7 @@ pub struct FeroxScan {
     pub(super) num_requests: u64,
 
     /// Status of this scan
-    pub(super) status: Mutex<ScanStatus>,
+    pub status: Mutex<ScanStatus>,
 
     /// The spawned tokio task performing this scan (uses tokio::sync::Mutex)
     pub(super) task: sync::Mutex<Option<JoinHandle<()>>>,
@@ -70,7 +70,7 @@ pub struct FeroxScan {
 impl Default for FeroxScan {
     /// Create a default FeroxScan, populates ID with a new UUID
     fn default() -> Self {
-        let new_id = Uuid::new_v4().to_simple().to_string();
+        let new_id = Uuid::new_v4().as_simple().to_string();
 
         FeroxScan {
             id: new_id,

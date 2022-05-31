@@ -1,6 +1,6 @@
 use super::utils::{
-    depth, report_and_exit, save_state, serialized_type, status_codes, threads, timeout,
-    user_agent, wordlist, OutputLevel, RequesterPolicy,
+    depth, ignored_extensions, methods, report_and_exit, save_state, serialized_type, status_codes,
+    threads, timeout, user_agent, wordlist, OutputLevel, RequesterPolicy,
 };
 use crate::config::determine_output_level;
 use crate::config::utils::determine_requester_policy;
@@ -9,9 +9,9 @@ use crate::{
     DEFAULT_CONFIG_NAME,
 };
 use anyhow::{anyhow, Context, Result};
-use clap::{value_t, ArgMatches};
+use clap::ArgMatches;
 use regex::Regex;
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Method, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -22,17 +22,15 @@ use std::{
 
 /// macro helper to abstract away repetitive configuration updates
 macro_rules! update_config_if_present {
-    ($c:expr, $m:ident, $v:expr, $t:ty) => {
-        match value_t!($m, $v, $t) {
-            Ok(value) => *$c = value, // Update value
-            Err(clap::Error {
-                kind: clap::ErrorKind::ArgumentNotFound,
-                message: _,
-                info: _,
-            }) => {
-                // Do nothing if argument not found
+    ($conf_val:expr, $matches:ident, $arg_name:expr) => {
+        match $matches.value_of_t($arg_name) {
+            Ok(value) => *$conf_val = value, // Update value
+            Err(err) => {
+                if !matches!(err.kind(), clap::ErrorKind::ArgumentNotFound) {
+                    // Do nothing if argument not found
+                    err.exit() // Exit with error on any other parse error
+                }
             }
-            Err(e) => e.exit(), // Exit with error on parse error
         }
     };
 }
@@ -171,6 +169,14 @@ pub struct Configuration {
     #[serde(default)]
     pub extensions: Vec<String>,
 
+    /// HTTP requests methods(s) to search for
+    #[serde(default = "methods")]
+    pub methods: Vec<String>,
+
+    /// HTTP Body data to send during request
+    #[serde(default)]
+    pub data: Vec<u8>,
+
     /// HTTP headers to be used in each request
     #[serde(default)]
     pub headers: HashMap<String, String>,
@@ -240,8 +246,6 @@ pub struct Configuration {
     pub resume_from: String,
 
     /// Whether or not a scan's current state should be saved when user presses Ctrl+C
-    ///
-    /// Not configurable from CLI; can only be set from a config file
     #[serde(default = "save_state")]
     pub save_state: bool,
 
@@ -258,8 +262,29 @@ pub struct Configuration {
     #[serde(default)]
     pub url_denylist: Vec<Url>,
 
+    /// URLs that should never be scanned/recursed into based on a regular expression
     #[serde(with = "serde_regex", default)]
     pub regex_denylist: Vec<Regex>,
+
+    /// Automatically discover extensions and add them to --extensions (unless they're in --dont-collect)
+    #[serde(default)]
+    pub collect_extensions: bool,
+
+    /// don't collect any of these extensions when --collect-extensions is used
+    #[serde(default = "ignored_extensions")]
+    pub dont_collect: Vec<String>,
+
+    /// Automatically request likely backup extensions on "found" urls
+    #[serde(default)]
+    pub collect_backups: bool,
+
+    /// Automatically discover important words from within responses and add them to the wordlist
+    #[serde(default)]
+    pub collect_words: bool,
+
+    /// override recursion logic to always attempt recursion, still respects --depth
+    #[serde(default)]
+    pub force_recursion: bool,
 }
 
 impl Default for Configuration {
@@ -304,7 +329,11 @@ impl Default for Configuration {
             no_recursion: false,
             extract_links: false,
             random_agent: false,
+            collect_extensions: false,
+            collect_backups: false,
+            collect_words: false,
             save_state: true,
+            force_recursion: false,
             proxy: String::new(),
             config: String::new(),
             output: String::new(),
@@ -315,6 +344,8 @@ impl Default for Configuration {
             replay_proxy: String::new(),
             queries: Vec::new(),
             extensions: Vec::new(),
+            methods: methods(),
+            data: Vec::new(),
             filter_size: Vec::new(),
             filter_regex: Vec::new(),
             url_denylist: Vec::new(),
@@ -327,6 +358,7 @@ impl Default for Configuration {
             depth: depth(),
             threads: threads(),
             wordlist: wordlist(),
+            dont_collect: ignored_extensions(),
         }
     }
 }
@@ -357,6 +389,12 @@ impl Configuration {
     /// - **random_agent**: `false`
     /// - **insecure**: `false` (don't be insecure, i.e. don't allow invalid certs)
     /// - **extensions**: `None`
+    /// - **collect_extensions**: `false`
+    /// - **collect_backups**: `false`
+    /// - **collect_words**: `false`
+    /// - **dont_collect**: [`DEFAULT_IGNORED_EXTENSIONS`](constant.DEFAULT_RESPONSE_CODES.html)
+    /// - **methods**: [`DEFAULT_METHOD`](constant.DEFAULT_METHOD.html)
+    /// - **data**: `None`
     /// - **url_denylist**: `None`
     /// - **regex_denylist**: `None`
     /// - **filter_size**: `None`
@@ -372,6 +410,7 @@ impl Configuration {
     /// - **json**: `false`
     /// - **dont_filter**: `false` (auto filter wildcard responses)
     /// - **depth**: `4` (maximum recursion depth)
+    /// - **force_recursion**: `false` (still respects recursion depth)
     /// - **scan_limit**: `0` (no limit on concurrent scans imposed)
     /// - **parallel**: `0` (no limit on parallel scans imposed)
     /// - **rate_limit**: `0` (no limit on requests per second imposed)
@@ -507,16 +546,16 @@ impl Configuration {
     fn parse_cli_args(args: &ArgMatches) -> Self {
         let mut config = Configuration::default();
 
-        update_config_if_present!(&mut config.threads, args, "threads", usize);
-        update_config_if_present!(&mut config.depth, args, "depth", usize);
-        update_config_if_present!(&mut config.scan_limit, args, "scan_limit", usize);
-        update_config_if_present!(&mut config.parallel, args, "parallel", usize);
-        update_config_if_present!(&mut config.rate_limit, args, "rate_limit", usize);
-        update_config_if_present!(&mut config.wordlist, args, "wordlist", String);
-        update_config_if_present!(&mut config.output, args, "output", String);
-        update_config_if_present!(&mut config.debug_log, args, "debug_log", String);
-        update_config_if_present!(&mut config.time_limit, args, "time_limit", String);
-        update_config_if_present!(&mut config.resume_from, args, "resume_from", String);
+        update_config_if_present!(&mut config.threads, args, "threads");
+        update_config_if_present!(&mut config.depth, args, "depth");
+        update_config_if_present!(&mut config.scan_limit, args, "scan_limit");
+        update_config_if_present!(&mut config.parallel, args, "parallel");
+        update_config_if_present!(&mut config.rate_limit, args, "rate_limit");
+        update_config_if_present!(&mut config.wordlist, args, "wordlist");
+        update_config_if_present!(&mut config.output, args, "output");
+        update_config_if_present!(&mut config.debug_log, args, "debug_log");
+        update_config_if_present!(&mut config.time_limit, args, "time_limit");
+        update_config_if_present!(&mut config.resume_from, args, "resume_from");
 
         if let Some(arg) = args.values_of("status_codes") {
             config.status_codes = arg
@@ -553,7 +592,34 @@ impl Configuration {
         }
 
         if let Some(arg) = args.values_of("extensions") {
-            config.extensions = arg.map(|val| val.to_string()).collect();
+            config.extensions = arg
+                .map(|val| val.trim_start_matches('.').to_string())
+                .collect();
+        }
+
+        if let Some(arg) = args.values_of("dont_collect") {
+            config.dont_collect = arg.map(|val| val.to_string()).collect();
+        }
+
+        if let Some(arg) = args.values_of("methods") {
+            config.methods = arg
+                .map(|val| {
+                    // Check methods if they are correct
+                    Method::from_bytes(val.as_bytes())
+                        .unwrap_or_else(|e| report_and_exit(&e.to_string()))
+                        .as_str()
+                        .to_string()
+                })
+                .collect();
+        }
+
+        if let Some(arg) = args.value_of("data") {
+            if let Some(stripped) = arg.strip_prefix('@') {
+                config.data =
+                    std::fs::read(stripped).unwrap_or_else(|e| report_and_exit(&e.to_string()));
+            } else {
+                config.data = arg.as_bytes().to_vec();
+            }
         }
 
         if args.is_present("stdin") {
@@ -569,7 +635,7 @@ impl Configuration {
             // url to be scanned. With the addition of regex support, I want to move parsing
             // out of should_deny_url and into here, so it's performed once instead of thousands
             // of times
-            for denier in arg.into_iter() {
+            for denier in arg {
                 // could be an absolute url or a regex, need to determine which and populate the
                 // appropriate vector
                 match Url::parse(denier.trim_end_matches('/')) {
@@ -655,7 +721,7 @@ impl Configuration {
             config.output_level = OutputLevel::Quiet;
         }
 
-        if args.is_present("auto_tune") {
+        if args.is_present("auto_tune") || args.is_present("smart") || args.is_present("thorough") {
             config.auto_tune = true;
             config.requester_policy = RequesterPolicy::AutoTune;
         }
@@ -665,8 +731,30 @@ impl Configuration {
             config.requester_policy = RequesterPolicy::AutoBail;
         }
 
+        if args.is_present("no_state") {
+            config.save_state = false;
+        }
+
         if args.is_present("dont_filter") {
             config.dont_filter = true;
+        }
+
+        if args.is_present("collect_extensions") || args.is_present("thorough") {
+            config.collect_extensions = true;
+        }
+
+        if args.is_present("collect_backups")
+            || args.is_present("smart")
+            || args.is_present("thorough")
+        {
+            config.collect_backups = true;
+        }
+
+        if args.is_present("collect_words")
+            || args.is_present("smart")
+            || args.is_present("thorough")
+        {
+            config.collect_words = true;
         }
 
         if args.occurrences_of("verbosity") > 0 {
@@ -683,7 +771,10 @@ impl Configuration {
             config.add_slash = true;
         }
 
-        if args.is_present("extract_links") {
+        if args.is_present("extract_links")
+            || args.is_present("smart")
+            || args.is_present("thorough")
+        {
             config.extract_links = true;
         }
 
@@ -691,13 +782,25 @@ impl Configuration {
             config.json = true;
         }
 
+        if args.is_present("force_recursion") {
+            config.force_recursion = true;
+        }
+
         ////
         // organizational breakpoint; all options below alter the Client configuration
         ////
-        update_config_if_present!(&mut config.proxy, args, "proxy", String);
-        update_config_if_present!(&mut config.replay_proxy, args, "replay_proxy", String);
-        update_config_if_present!(&mut config.user_agent, args, "user_agent", String);
-        update_config_if_present!(&mut config.timeout, args, "timeout", u64);
+        update_config_if_present!(&mut config.proxy, args, "proxy");
+        update_config_if_present!(&mut config.replay_proxy, args, "replay_proxy");
+        update_config_if_present!(&mut config.user_agent, args, "user_agent");
+        update_config_if_present!(&mut config.timeout, args, "timeout");
+
+        if args.is_present("burp") {
+            config.proxy = String::from("http://127.0.0.1:8080");
+        }
+
+        if args.is_present("burp_replay") {
+            config.replay_proxy = String::from("http://127.0.0.1:8080");
+        }
 
         if args.is_present("random_agent") {
             config.random_agent = true;
@@ -707,7 +810,8 @@ impl Configuration {
             config.redirects = true;
         }
 
-        if args.is_present("insecure") {
+        if args.is_present("insecure") || args.is_present("burp") || args.is_present("burp_replay")
+        {
             config.insecure = true;
         }
 
@@ -723,6 +827,22 @@ impl Configuration {
                 let value = split_val.collect::<Vec<&str>>().join(":");
                 config.headers.insert(name.to_string(), value.to_string());
             }
+        }
+
+        if let Some(cookies) = args.values_of("cookies") {
+            config.headers.insert(
+                // we know the header name is always "cookie"
+                "Cookie".to_string(),
+                // on splitting, there should be only two elements,
+                // a key and a value
+                cookies
+                    .map(|cookie| cookie.split('=').collect::<Vec<&str>>()[..].to_owned())
+                    .filter(|parts| parts.len() == 2)
+                    .map(|parts| format!("{}={}", parts[0].trim(), parts[1].trim()))
+                    // trim the spaces, join with an equals sign
+                    .collect::<Vec<String>>()
+                    .join("; "), // join all the cookies with semicolons for the final header
+            );
         }
 
         if let Some(queries) = args.values_of("queries") {
@@ -825,14 +945,20 @@ impl Configuration {
         update_if_not_default!(&mut conf.quiet, new.quiet, false);
         update_if_not_default!(&mut conf.auto_bail, new.auto_bail, false);
         update_if_not_default!(&mut conf.auto_tune, new.auto_tune, false);
+        update_if_not_default!(&mut conf.collect_extensions, new.collect_extensions, false);
+        update_if_not_default!(&mut conf.collect_backups, new.collect_backups, false);
+        update_if_not_default!(&mut conf.collect_words, new.collect_words, false);
         // use updated quiet/silent values to determine output level; same for requester policy
         conf.output_level = determine_output_level(conf.quiet, conf.silent);
         conf.requester_policy = determine_requester_policy(conf.auto_tune, conf.auto_bail);
         update_if_not_default!(&mut conf.output, new.output, "");
         update_if_not_default!(&mut conf.redirects, new.redirects, false);
         update_if_not_default!(&mut conf.insecure, new.insecure, false);
+        update_if_not_default!(&mut conf.force_recursion, new.force_recursion, false);
         update_if_not_default!(&mut conf.extract_links, new.extract_links, false);
         update_if_not_default!(&mut conf.extensions, new.extensions, Vec::<String>::new());
+        update_if_not_default!(&mut conf.methods, new.methods, Vec::<String>::new());
+        update_if_not_default!(&mut conf.data, new.data, Vec::<u8>::new());
         update_if_not_default!(&mut conf.url_denylist, new.url_denylist, Vec::<Url>::new());
         if !new.regex_denylist.is_empty() {
             // cant use the update_if_not_default macro due to the following error
@@ -892,6 +1018,11 @@ impl Configuration {
         // status_codes() is the default for replay_codes, if they're not provided
         update_if_not_default!(&mut conf.replay_codes, new.replay_codes, status_codes());
         update_if_not_default!(&mut conf.save_state, new.save_state, save_state());
+        update_if_not_default!(
+            &mut conf.dont_collect,
+            new.dont_collect,
+            ignored_extensions()
+        );
     }
 
     /// If present, read in `DEFAULT_CONFIG_NAME` and deserialize the specified values
@@ -899,7 +1030,17 @@ impl Configuration {
     /// uses serde to deserialize the toml into a `Configuration` struct
     pub(super) fn parse_config(config_file: PathBuf) -> Result<Self> {
         let content = read_to_string(config_file)?;
-        let config: Self = toml::from_str(content.as_str())?;
+        let mut config: Self = toml::from_str(content.as_str())?;
+
+        if !config.extensions.is_empty() {
+            // remove leading periods, if any are found
+            config.extensions = config
+                .extensions
+                .iter()
+                .map(|ext| ext.trim_start_matches('.').to_string())
+                .collect();
+        }
+
         Ok(config)
     }
 }

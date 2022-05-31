@@ -9,10 +9,9 @@ _feroxbuster() {
     for i in ${COMP_WORDS[@]}
     do
         case "${i}" in
-            feroxbuster)
+            "$1")
                 cmd="feroxbuster"
                 ;;
-            
             *)
                 ;;
         esac
@@ -20,90 +19,17 @@ _feroxbuster() {
 
     case "${cmd}" in
         feroxbuster)
-            opts=" -v -q -D -A -r -k -n -f -e -h -V -w -u -t -d -T -p -P -R -s -o -a -x -H -Q -S -X -W -N -C -L  --verbosity --silent --quiet --auto-tune --auto-bail --json --dont-filter --random-agent --redirects --insecure --no-recursion --add-slash --stdin --extract-links --help --version --wordlist --url --threads --depth --timeout --proxy --replay-proxy --replay-codes --status-codes --output --resume-from --debug-log --user-agent --extensions --dont-scan --headers --query --filter-size --filter-regex --filter-words --filter-lines --filter-status --filter-similar-to --scan-limit --parallel --rate-limit --time-limit  "
+            opts="-h -V -u -p -P -R -a -A -x -m -H -b -Q -f -S -X -W -N -C -s -T -r -k -t -n -d -e -L -w -D -E -B -g -I -v -q -o --help --version --url --stdin --resume-from --burp --burp-replay --smart --thorough --proxy --replay-proxy --replay-codes --user-agent --random-agent --extensions --methods --data --headers --cookies --query --add-slash --dont-scan --filter-size --filter-regex --filter-words --filter-lines --filter-status --filter-similar-to --status-codes --timeout --redirects --insecure --threads --no-recursion --depth --force-recursion --extract-links --scan-limit --parallel --rate-limit --time-limit --wordlist --auto-tune --auto-bail --dont-filter --collect-extensions --collect-backups --collect-words --dont-collect --verbosity --silent --quiet --json --output --debug-log --no-state"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
-                
-                --wordlist)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -w)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
                 --url)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -u)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --threads)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -t)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --depth)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -d)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --timeout)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -T)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --proxy)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -p)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --replay-proxy)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -P)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --replay-codes)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -R)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --status-codes)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -s)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --output)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                    -o)
+                -u)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -111,7 +37,27 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                --debug-log)
+                --proxy)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -p)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --replay-proxy)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -P)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --replay-codes)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -119,7 +65,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -a)
+                -a)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -127,11 +73,19 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -x)
+                -x)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                --dont-scan)
+                --methods)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --data)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -139,7 +93,15 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -H)
+                -H)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --cookies)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -b)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -147,7 +109,11 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -Q)
+                -Q)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --dont-scan)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -155,7 +121,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -S)
+                -S)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -163,7 +129,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -X)
+                -X)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -171,7 +137,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -W)
+                -W)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -179,7 +145,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -N)
+                -N)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -187,7 +153,7 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -C)
+                -C)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -195,11 +161,43 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --status-codes)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -s)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --timeout)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -T)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -t)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --depth)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -d)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --scan-limit)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
-                    -L)
+                -L)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -215,6 +213,34 @@ _feroxbuster() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --wordlist)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -w)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --dont-collect)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -I)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --debug-log)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -222,7 +248,6 @@ _feroxbuster() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        
     esac
 }
 

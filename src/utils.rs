@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use console::{strip_ansi_codes, style, user_attended};
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::{Client, Response, StatusCode, Url};
+use reqwest::{Client, Method, Response, StatusCode, Url};
 #[cfg(not(target_os = "windows"))]
 use rlimit::{getrlimit, setrlimit, Resource};
 use std::{
@@ -12,16 +12,17 @@ use std::{
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
-use crate::config::Configuration;
 use crate::{
+    config::Configuration,
     config::OutputLevel,
     event_handlers::{
         Command::{self, AddError, AddStatus},
         Handles,
     },
     progress::PROGRESS_PRINTER,
+    response::FeroxResponse,
     send_command,
     statistics::StatError::{Connection, Other, Redirection, Request, Timeout},
     traits::FeroxSerialize,
@@ -67,6 +68,20 @@ pub fn fmt_err(msg: &str) -> String {
     format!("{}: {}", status_colorizer("ERROR"), msg)
 }
 
+/// given a FeroxResponse, send a TryRecursion command
+///
+/// moved to utils to allow for calls from extractor and scanner
+pub(crate) async fn send_try_recursion_command(
+    handles: Arc<Handles>,
+    response: FeroxResponse,
+) -> Result<()> {
+    handles.send_scan_command(Command::TryRecursion(Box::new(response.clone())))?;
+    let (tx, rx) = oneshot::channel::<bool>();
+    handles.send_scan_command(Command::Sync(tx))?;
+    rx.await?;
+    Ok(())
+}
+
 /// Takes in a string and colors it using console::style
 ///
 /// mainly putting this here in case i want to change the color later, making any changes easy
@@ -95,15 +110,19 @@ pub fn ferox_print(msg: &str, bar: &ProgressBar) {
 
 /// wrapper for make_request used to pass error/response codes to FeroxScans for per-scan stats
 /// tracking of information related to auto-tune/bail
-pub async fn logged_request(url: &Url, handles: Arc<Handles>) -> Result<Response> {
+pub async fn logged_request(
+    url: &Url,
+    method: &str,
+    data: Option<&[u8]>,
+    handles: Arc<Handles>,
+) -> Result<Response> {
     let client = &handles.config.client;
     let level = handles.config.output_level;
     let tx_stats = handles.stats.tx.clone();
 
-    let response = make_request(client, url, level, &handles.config, tx_stats).await;
+    let response = make_request(client, url, method, data, level, &handles.config, tx_stats).await;
 
     let scans = handles.ferox_scans()?;
-
     match response {
         Ok(resp) => {
             match resp.status() {
@@ -126,6 +145,8 @@ pub async fn logged_request(url: &Url, handles: Arc<Handles>) -> Result<Response
 pub async fn make_request(
     client: &Client,
     url: &Url,
+    method: &str,
+    mut data: Option<&[u8]>,
     output_level: OutputLevel,
     config: &Configuration,
     tx_stats: UnboundedSender<Command>,
@@ -136,8 +157,33 @@ pub async fn make_request(
         output_level,
         tx_stats
     );
+    let tmp_workaround: Option<&[u8]> = Some(&[0xd_u8, 0xa]); // \r\n
 
-    let mut request = client.get(url.to_owned());
+    let mut request = client.request(Method::from_bytes(method.as_bytes())?, url.to_owned());
+
+    if (!config.proxy.is_empty() || !config.replay_proxy.is_empty())
+        && data.is_none()
+        && ["post", "put", "patch"].contains(&method.to_ascii_lowercase().as_str())
+    {
+        // either --proxy or --replay-proxy was specified
+        // AND
+        // --data wasn't used
+        // AND
+        // the method is either post/put/patch (case insensitive)
+        //
+        // this combination of factors results in requests that are delayed for 10 seconds before
+        // being issued. The tracking issues are
+        //   https://github.com/epi052/feroxbuster/issues/501
+        //   https://github.com/seanmonstar/reqwest/issues/1474
+        //
+        // as a (hopefully temporary) workaround, we'll add \r\n to the body so that there's no
+        // delay
+        data = tmp_workaround;
+    }
+
+    if let Some(body_data) = data {
+        request = request.body(body_data.to_vec());
+    }
 
     if config.random_agent {
         let index = unsafe {
@@ -159,21 +205,27 @@ pub async fn make_request(
             } else if e.is_redirect() {
                 if let Some(last_redirect) = e.url() {
                     // get where we were headed (last_redirect) and where we came from (url)
-                    let fancy_message = format!("{} !=> {}", url, last_redirect);
+                    let fancy_message = format!(
+                        "{} !=> {} ({})",
+                        url,
+                        last_redirect,
+                        style("too many redirects").red(),
+                    );
 
-                    let report = if let Some(msg_status) = e.status() {
-                        send_command!(tx_stats, AddStatus(msg_status));
-                        create_report_string(
-                            msg_status.as_str(),
-                            "-1",
-                            "-1",
-                            "-1",
-                            &fancy_message,
-                            output_level,
-                        )
-                    } else {
-                        create_report_string("UNK", "-1", "-1", "-1", &fancy_message, output_level)
+                    let msg_status = match e.status() {
+                        Some(status) => status.to_string(),
+                        None => "ERR".to_string(),
                     };
+
+                    let report = create_report_string(
+                        &msg_status,
+                        method,
+                        "-1",
+                        "-1",
+                        "-1",
+                        &fancy_message,
+                        output_level,
+                    );
 
                     send_command!(tx_stats, AddError(Redirection));
 
@@ -204,6 +256,7 @@ pub async fn make_request(
 /// 200      127l      283w     4134c http://localhost/faq
 pub fn create_report_string(
     status: &str,
+    method: &str,
     line_count: &str,
     word_count: &str,
     content_length: &str,
@@ -216,10 +269,17 @@ pub fn create_report_string(
     } else {
         // normal printing with status and sizes
         let color_status = status_colorizer(status);
-        format!(
-            "{} {:>8}l {:>8}w {:>8}c {}\n",
-            color_status, line_count, word_count, content_length, url
-        )
+        if status.contains("MSG") {
+            format!(
+                "{} {:>8} {:>9} {:>9} {:>9} {}\n",
+                color_status, method, line_count, word_count, content_length, url
+            )
+        } else {
+            format!(
+                "{} {:>8} {:>8}l {:>8}w {:>8}c {}\n",
+                color_status, method, line_count, word_count, content_length, url
+            )
+        }
     }
 }
 
@@ -466,7 +526,7 @@ pub fn slugify_filename(url: &str, prefix: &str, suffix: &str) -> String {
         String::new()
     };
 
-    let slug = url.replace("://", "_").replace("/", "_").replace(".", "_");
+    let slug = url.replace("://", "_").replace('/', "_").replace('.', "_");
 
     let filename = format!("{}{}-{}.{}", altered_prefix, slug, ts, suffix);
 

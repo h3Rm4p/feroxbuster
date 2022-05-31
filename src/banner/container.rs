@@ -3,7 +3,7 @@ use crate::{
     config::Configuration,
     event_handlers::Handles,
     utils::{logged_request, status_colorizer},
-    VERSION,
+    DEFAULT_IGNORED_EXTENSIONS, DEFAULT_METHOD, VERSION,
 };
 use anyhow::{bail, Result};
 use console::{style, Emoji};
@@ -98,6 +98,12 @@ pub struct Banner {
     /// represents Configuration.extensions
     extensions: BannerEntry,
 
+    /// represents Configuration.methods
+    methods: BannerEntry,
+
+    /// represents Configuration.data
+    data: BannerEntry,
+
     /// represents Configuration.insecure
     insecure: BannerEntry,
 
@@ -145,6 +151,21 @@ pub struct Banner {
 
     /// whether or not there is a known new version
     pub(super) update_status: UpdateStatus,
+
+    /// represents Configuration.collect_extensions
+    collect_extensions: BannerEntry,
+
+    /// represents Configuration.dont_collect
+    dont_collect: BannerEntry,
+
+    /// represents Configuration.collect_backups
+    collect_backups: BannerEntry,
+
+    /// represents Configuration.collect_words
+    collect_words: BannerEntry,
+
+    /// represents Configuration.collect_words
+    force_recursion: BannerEntry,
 }
 
 /// implementation of Banner
@@ -282,6 +303,8 @@ impl Banner {
             &config.scan_limit.to_string(),
         );
 
+        let force_recursion =
+            BannerEntry::new("🤘", "Force Recursion", &config.force_recursion.to_string());
         let replay_proxy = BannerEntry::new("🎥", "Replay Proxy", &config.replay_proxy);
         let auto_tune = BannerEntry::new("🎶", "Auto Tune", &config.auto_tune.to_string());
         let auto_bail = BannerEntry::new("🪣", "Auto Bail", &config.auto_bail.to_string());
@@ -302,6 +325,38 @@ impl Banner {
             "Extensions",
             &format!("[{}]", config.extensions.join(", ")),
         );
+        let methods = BannerEntry::new(
+            "🏁",
+            "HTTP methods",
+            &format!("[{}]", config.methods.join(", ")),
+        );
+
+        let dont_collect = if config.dont_collect == DEFAULT_IGNORED_EXTENSIONS {
+            // default has 30+ extensions, just trim it up
+            BannerEntry::new(
+                "💸",
+                "Ignored Extensions",
+                "[Images, Movies, Audio, etc...]",
+            )
+        } else {
+            BannerEntry::new(
+                "💸",
+                "Ignored Extensions",
+                &format!("[{}]", config.dont_collect.join(", ")),
+            )
+        };
+
+        let offset = std::cmp::min(config.data.len(), 30);
+        let data = String::from_utf8(config.data[..offset].to_vec())
+            .unwrap_or_else(|_err| {
+                format!(
+                    "{:x?} ...",
+                    &config.data[..std::cmp::min(config.data.len(), 13)]
+                )
+            })
+            .replace('\n', " ")
+            .replace('\r', "");
+        let data = BannerEntry::new("💣", "HTTP Body", &data);
         let insecure = BannerEntry::new("🔓", "Insecure", &config.insecure.to_string());
         let redirects = BannerEntry::new("📍", "Follow Redirects", &config.redirects.to_string());
         let dont_filter =
@@ -311,6 +366,16 @@ impl Banner {
         let parallel = BannerEntry::new("🛤", "Parallel Scans", &config.parallel.to_string());
         let rate_limit =
             BannerEntry::new("🚧", "Requests per Second", &config.rate_limit.to_string());
+        let collect_extensions = BannerEntry::new(
+            "💰",
+            "Collect Extensions",
+            &config.collect_extensions.to_string(),
+        );
+        let collect_backups =
+            BannerEntry::new("🏦", "Collect Backups", &config.collect_backups.to_string());
+
+        let collect_words =
+            BannerEntry::new("🤑", "Collect Words", &config.collect_words.to_string());
 
         Self {
             targets,
@@ -339,6 +404,8 @@ impl Banner {
             output,
             debug_log,
             extensions,
+            methods,
+            data,
             insecure,
             dont_filter,
             redirects,
@@ -347,8 +414,13 @@ impl Banner {
             no_recursion,
             rate_limit,
             scan_limit,
+            force_recursion,
             time_limit,
             url_denylist,
+            collect_extensions,
+            collect_backups,
+            collect_words,
+            dont_collect,
             config: cfg,
             version: VERSION.to_string(),
             update_status: UpdateStatus::Unknown,
@@ -395,7 +467,7 @@ by Ben "epi" Risher {}                 ver: {}"#,
 
         let api_url = Url::parse(url)?;
 
-        let result = logged_request(&api_url, handles.clone()).await?;
+        let result = logged_request(&api_url, DEFAULT_METHOD, None, handles.clone()).await?;
         let body = result.text().await?;
 
         let json_response: Value = serde_json::from_str(&body)?;
@@ -445,11 +517,12 @@ by Ben "epi" Risher {}                 ver: {}"#,
 
         writeln!(&mut writer, "{}", self.threads)?;
         writeln!(&mut writer, "{}", self.wordlist)?;
-        writeln!(&mut writer, "{}", self.status_codes)?;
 
-        if !config.filter_status.is_empty() {
-            // exception here for an optional print in the middle of always printed values is due
-            // to me wanting the allows and denys to be printed one after the other
+        if config.filter_status.is_empty() {
+            // -C and -s are mutually exclusive, and -s meaning changes when -C is used
+            // so only print one or the other
+            writeln!(&mut writer, "{}", self.status_codes)?;
+        } else {
             writeln!(&mut writer, "{}", self.filter_status)?;
         }
 
@@ -525,6 +598,28 @@ by Ben "epi" Risher {}                 ver: {}"#,
             writeln!(&mut writer, "{}", self.extensions)?;
         }
 
+        if config.collect_extensions {
+            // dont-collect is active only when collect-extensions is used
+            writeln!(&mut writer, "{}", self.collect_extensions)?;
+            writeln!(&mut writer, "{}", self.dont_collect)?;
+        }
+
+        if config.collect_backups {
+            writeln!(&mut writer, "{}", self.collect_backups)?;
+        }
+
+        if config.collect_words {
+            writeln!(&mut writer, "{}", self.collect_words)?;
+        }
+
+        if !config.methods.is_empty() {
+            writeln!(&mut writer, "{}", self.methods)?;
+        }
+
+        if !config.data.is_empty() {
+            writeln!(&mut writer, "{}", self.data)?;
+        }
+
         if config.insecure {
             writeln!(&mut writer, "{}", self.insecure)?;
         }
@@ -553,6 +648,10 @@ by Ben "epi" Risher {}                 ver: {}"#,
         }
 
         writeln!(&mut writer, "{}", self.no_recursion)?;
+
+        if config.force_recursion {
+            writeln!(&mut writer, "{}", self.force_recursion)?;
+        }
 
         if config.scan_limit > 0 {
             writeln!(&mut writer, "{}", self.scan_limit)?;

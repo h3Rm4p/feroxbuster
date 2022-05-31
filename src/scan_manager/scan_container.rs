@@ -1,5 +1,12 @@
 use super::scan::ScanType;
 use super::*;
+use crate::event_handlers::Handles;
+use crate::filters::{
+    EmptyFilter, LinesFilter, RegexFilter, SimilarityFilter, SizeFilter, StatusCodeFilter,
+    WildcardFilter, WordsFilter,
+};
+use crate::traits::FeroxFilter;
+use crate::Command::AddFilter;
 use crate::{
     config::OutputLevel,
     progress::PROGRESS_PRINTER,
@@ -7,12 +14,14 @@ use crate::{
     scan_manager::{MenuCmd, MenuCmdResult},
     scanner::RESPONSES,
     traits::FeroxSerialize,
-    SLEEP_DURATION,
+    Command, SLEEP_DURATION,
 };
 use anyhow::Result;
+use console::style;
 use reqwest::StatusCode;
 use serde::{ser::SerializeSeq, Serialize, Serializer};
 use std::{
+    collections::HashSet,
     convert::TryInto,
     fs::File,
     io::BufReader,
@@ -47,6 +56,9 @@ pub struct FeroxScans {
 
     /// whether or not the user passed --silent|--quiet on the command line
     output_level: OutputLevel,
+
+    /// vector of extensions discovered and collected during scans
+    pub(crate) collected_extensions: RwLock<HashSet<String>>,
 }
 
 /// Serialize implementation for FeroxScans
@@ -58,17 +70,20 @@ impl Serialize for FeroxScans {
     where
         S: Serializer,
     {
-        if let Ok(scans) = self.scans.read() {
-            let mut seq = serializer.serialize_seq(Some(scans.len()))?;
-            for scan in scans.iter() {
-                seq.serialize_element(&*scan).unwrap_or_default();
-            }
+        match self.scans.read() {
+            Ok(scans) => {
+                let mut seq = serializer.serialize_seq(Some(scans.len() + 1))?;
 
-            seq.end()
-        } else {
-            // if for some reason we can't unlock the RwLock, just write an empty list
-            let seq = serializer.serialize_seq(Some(0))?;
-            seq.end()
+                for scan in scans.iter() {
+                    seq.serialize_element(&*scan).unwrap_or_default();
+                }
+                seq.end()
+            }
+            Err(_) => {
+                // if for some reason we can't unlock the RwLock, just write an empty list
+                let seq = serializer.serialize_seq(Some(0))?;
+                seq.end()
+            }
         }
     }
 }
@@ -109,8 +124,8 @@ impl FeroxScans {
         sentry
     }
 
-    /// load serialized FeroxScan(s) into this FeroxScans  
-    pub fn add_serialized_scans(&self, filename: &str) -> Result<()> {
+    /// load serialized FeroxScan(s) and any previously collected extensions into this FeroxScans  
+    pub fn add_serialized_scans(&self, filename: &str, handles: Arc<Handles>) -> Result<()> {
         log::trace!("enter: add_serialized_scans({})", filename);
         let file = File::open(filename)?;
 
@@ -122,14 +137,70 @@ impl FeroxScans {
                 for scan in arr_scans {
                     let mut deser_scan: FeroxScan =
                         serde_json::from_value(scan.clone()).unwrap_or_default();
+
                     // FeroxScans gets -q value from config as usual; the FeroxScans themselves
                     // rely on that value being passed in. If the user starts a scan without -q
                     // and resumes the scan but adds -q, FeroxScan will not have the proper value
                     // without the line below
                     deser_scan.output_level = self.output_level;
 
-                    log::debug!("added: {}", deser_scan);
                     self.insert(Arc::new(deser_scan));
+                }
+            }
+        }
+
+        if let Some(extensions) = state.get("collected_extensions") {
+            if let Some(arr_exts) = extensions.as_array() {
+                if let Ok(mut guard) = self.collected_extensions.write() {
+                    for ext in arr_exts {
+                        let deser_ext: String =
+                            serde_json::from_value(ext.clone()).unwrap_or_default();
+
+                        guard.insert(deser_ext);
+                    }
+                }
+            }
+        }
+
+        if let Some(filters) = state.get("filters") {
+            if let Some(arr_filters) = filters.as_array() {
+                for filter in arr_filters {
+                    let final_filter: Box<dyn FeroxFilter> = if let Ok(deserialized) =
+                        serde_json::from_value::<RegexFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<WordsFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<WildcardFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<SizeFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<LinesFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<SimilarityFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else if let Ok(deserialized) =
+                        serde_json::from_value::<StatusCodeFilter>(filter.clone())
+                    {
+                        Box::new(deserialized)
+                    } else {
+                        Box::new(EmptyFilter {})
+                    };
+
+                    handles
+                        .filters
+                        .send(AddFilter(final_filter))
+                        .unwrap_or_default();
                 }
             }
         }
@@ -163,8 +234,8 @@ impl FeroxScans {
         None
     }
 
-    pub(super) fn get_base_scan_by_url(&self, url: &str) -> Option<Arc<FeroxScan>> {
-        log::trace!("enter: get_sub_paths_from_path({})", url);
+    pub fn get_base_scan_by_url(&self, url: &str) -> Option<Arc<FeroxScan>> {
+        log::trace!("enter: get_base_scan_by_url({})", url);
 
         // rmatch_indices returns tuples in index, match form, i.e. (10, "/")
         // with the furthest-right match in the first position in the vector
@@ -188,14 +259,14 @@ impl FeroxScans {
                 for scan in guard.iter() {
                     let slice = url.index(0..*idx);
                     if slice == scan.url || format!("{}/", slice).as_str() == scan.url {
-                        log::trace!("enter: get_sub_paths_from_path -> {}", scan);
+                        log::trace!("enter: get_base_scan_by_url -> {}", scan);
                         return Some(scan.clone());
                     }
                 }
             }
         }
 
-        log::trace!("enter: get_sub_paths_from_path -> None");
+        log::trace!("enter: get_base_scan_by_url -> None");
         None
     }
     /// add one to either 403 or 429 tracker in the scan related to the given url
@@ -237,6 +308,8 @@ impl FeroxScans {
                 .clone()
         };
 
+        let mut printed = 0;
+
         for (i, scan) in scans.iter().enumerate() {
             if matches!(scan.scan_order, ScanOrder::Initial) || scan.task.try_lock().is_err() {
                 // original target passed in via either -u or --stdin
@@ -244,11 +317,20 @@ impl FeroxScans {
             }
 
             if matches!(scan.scan_type, ScanType::Directory) {
+                if printed == 0 {
+                    self.menu
+                        .println(&format!("{}:", style("Scans").bright().blue()));
+                }
                 // we're only interested in displaying directory scans, as those are
                 // the only ones that make sense to be stopped
                 let scan_msg = format!("{:3}: {}", i, scan);
                 self.menu.println(&scan_msg);
+                printed += 1;
             }
+        }
+
+        if printed > 0 {
+            self.menu.print_border();
         }
     }
 
@@ -300,12 +382,34 @@ impl FeroxScans {
         num_cancelled
     }
 
+    fn display_filters(&self, handles: Arc<Handles>) {
+        let mut printed = 0;
+
+        if let Ok(guard) = handles.filters.data.filters.read() {
+            for (i, filter) in guard.iter().enumerate() {
+                if i == 0 {
+                    self.menu
+                        .println(&format!("{}:", style("Filters").bright().blue()));
+                }
+
+                let filter_msg = format!("{:3}: {}", i + 1, filter);
+                self.menu.println(&filter_msg);
+                printed += 1;
+            }
+
+            if printed > 0 {
+                self.menu.print_border();
+            }
+        }
+    }
+
     /// CLI menu that allows for interactive cancellation of recursed-into directories
-    async fn interactive_menu(&self) -> Option<MenuCmdResult> {
+    async fn interactive_menu(&self, handles: Arc<Handles>) -> Option<MenuCmdResult> {
         self.menu.hide_progress_bars();
         self.menu.clear_screen();
         self.menu.print_header();
         self.display_scans().await;
+        self.display_filters(handles.clone());
         self.menu.print_footer();
 
         let menu_cmd = if let Ok(line) = self.menu.term.read_line() {
@@ -320,7 +424,15 @@ impl FeroxScans {
                 let num_cancelled = self.cancel_scans(indices, should_force).await;
                 Some(MenuCmdResult::NumCancelled(num_cancelled))
             }
-            Some(MenuCmd::Add(url)) => Some(MenuCmdResult::Url(url)),
+            Some(MenuCmd::AddUrl(url)) => Some(MenuCmdResult::Url(url)),
+            Some(MenuCmd::AddFilter(filter)) => Some(MenuCmdResult::Filter(filter)),
+            Some(MenuCmd::RemoveFilter(indices)) => {
+                handles
+                    .filters
+                    .send(Command::RemoveFilters(indices))
+                    .unwrap_or_default();
+                None
+            }
             None => None,
         };
 
@@ -375,7 +487,11 @@ impl FeroxScans {
     ///
     /// When the value stored in `PAUSE_SCAN` becomes `false`, the function returns, exiting the busy
     /// loop
-    pub async fn pause(&self, get_user_input: bool) -> Option<MenuCmdResult> {
+    pub async fn pause(
+        &self,
+        get_user_input: bool,
+        handles: Arc<Handles>,
+    ) -> Option<MenuCmdResult> {
         // function uses tokio::time, not std
 
         // local testing showed a pretty slow increase (less than linear) in CPU usage as # of
@@ -387,7 +503,7 @@ impl FeroxScans {
             INTERACTIVE_BARRIER.fetch_add(1, Ordering::Relaxed);
 
             if get_user_input {
-                command_result = self.interactive_menu().await;
+                command_result = self.interactive_menu(handles).await;
                 PAUSE_SCAN.store(false, Ordering::Relaxed);
                 self.print_known_responses();
             }
@@ -510,5 +626,68 @@ impl FeroxScans {
             }
         }
         scans
+    }
+
+    /// given an extension, add it to `collected_extensions` if all constraints are met
+    /// returns `true` if an extension was added, `false` otherwise
+    pub fn add_discovered_extension(&self, extension: String) -> bool {
+        log::trace!("enter: add_discovered_extension({})", extension);
+        let mut extension_added = false;
+
+        // note: the filter by --dont-collect happens in the event handler, since it has access
+        // to a Handles object form which it can check the config value. additionally, the check
+        // against --extensions is performed there for the same reason
+
+        if let Ok(extensions) = self.collected_extensions.read() {
+            // quicker to allow most to read and return and then reopen for write if necessary
+            if extensions.contains(&extension) {
+                return extension_added;
+            }
+        }
+
+        if let Ok(mut extensions) = self.collected_extensions.write() {
+            log::info!("discovered new extension: {}", extension);
+            extensions.insert(extension);
+            extension_added = true;
+        }
+
+        log::trace!("exit: add_discovered_extension -> {}", extension_added);
+        extension_added
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    /// unknown extension should be added to collected_extensions
+    fn unknown_extension_is_added_to_collected_extensions() {
+        let scans = FeroxScans::new(OutputLevel::Default);
+
+        assert_eq!(0, scans.collected_extensions.read().unwrap().len());
+
+        let added = scans.add_discovered_extension(String::from("js"));
+
+        assert!(added);
+        assert_eq!(1, scans.collected_extensions.read().unwrap().len());
+    }
+
+    #[test]
+    /// known extension should not be added to collected_extensions
+    fn known_extension_is_added_to_collected_extensions() {
+        let scans = FeroxScans::new(OutputLevel::Default);
+        scans
+            .collected_extensions
+            .write()
+            .unwrap()
+            .insert(String::from("js"));
+
+        assert_eq!(1, scans.collected_extensions.read().unwrap().len());
+
+        let added = scans.add_discovered_extension(String::from("js"));
+
+        assert!(!added);
+        assert_eq!(1, scans.collected_extensions.read().unwrap().len());
     }
 }

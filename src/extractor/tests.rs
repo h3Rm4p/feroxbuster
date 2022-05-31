@@ -4,6 +4,7 @@ use crate::config::{Configuration, OutputLevel};
 use crate::scan_manager::ScanOrder;
 use crate::{
     event_handlers::Handles, scan_manager::FeroxScans, utils::make_request, Command, FeroxChannel,
+    DEFAULT_METHOD,
 };
 use anyhow::Result;
 use httpmock::{Method::GET, MockServer};
@@ -18,6 +19,9 @@ lazy_static! {
 
     /// Extractor for testing response bodies
     static ref BODY_EXT: Extractor<'static> = setup_extractor(ExtractionTarget::ResponseBody, Arc::new(FeroxScans::default()));
+
+    /// Extractor for testing paring html
+    static ref PARSEHTML_EXT: Extractor<'static> = setup_extractor(ExtractionTarget::DirectoryListing, Arc::new(FeroxScans::default()));
 
     /// FeroxResponse for Extractor
     static ref RESPONSE: FeroxResponse = get_test_response();
@@ -41,6 +45,9 @@ fn setup_extractor(target: ExtractionTarget, scanned_urls: Arc<FeroxScans>) -> E
         ExtractionTarget::RobotsTxt => builder
             .url("http://localhost")
             .target(ExtractionTarget::RobotsTxt),
+        ExtractionTarget::DirectoryListing => builder
+            .url("http://localhost")
+            .target(ExtractionTarget::DirectoryListing),
     };
 
     let config = Arc::new(Configuration::new().unwrap());
@@ -188,7 +195,6 @@ fn extractor_add_link_to_set_of_links_happy_path() {
 fn extractor_add_link_to_set_of_links_with_non_base_url() {
     let mut links = HashSet::<String>::new();
     let link = "\\\\\\\\";
-
     assert_eq!(links.len(), 0);
     assert!(ROBOTS_EXT
         .add_link_to_set_of_links(link, &mut links)
@@ -197,6 +203,34 @@ fn extractor_add_link_to_set_of_links_with_non_base_url() {
 
     assert_eq!(links.len(), 0);
     assert!(links.is_empty());
+}
+
+#[test]
+/// test for filtering queries and fragments
+fn normalize_url_path_filters_queries_and_fragments() {
+    let handles = Arc::new(Handles::for_testing(None, None).0);
+    let extractor = ExtractorBuilder::default()
+        .url("doesnt matter")
+        .target(ExtractionTarget::RobotsTxt)
+        .handles(handles)
+        .build()
+        .unwrap();
+
+    let test_strings = [
+        "over/there?name=ferret#nose",
+        "over/there?name=ferret",
+        "over/there#nose",
+        "over/there",
+        "over/there?name#nose",
+        "over/there?name",
+        "   over/there?name=ferret#nose  ",
+        "over/there?name=ferret   ",
+        "   over/there#nose",
+    ];
+    test_strings.iter().for_each(|&ts| {
+        let normed = extractor.normalize_url_path(ts);
+        assert_eq!(normed, "over/there");
+    });
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -222,6 +256,8 @@ async fn extractor_get_links_with_absolute_url_that_differs_from_target_domain()
     let response = make_request(
         &client,
         &url,
+        DEFAULT_METHOD,
+        None,
         OutputLevel::Default,
         &config,
         tx_stats.clone(),
@@ -232,7 +268,7 @@ async fn extractor_get_links_with_absolute_url_that_differs_from_target_domain()
 
     let handles = Arc::new(handles);
     let ferox_response =
-        FeroxResponse::from(response, &srv.url(""), true, OutputLevel::Default).await;
+        FeroxResponse::from(response, &srv.url(""), DEFAULT_METHOD, OutputLevel::Default).await;
 
     let extractor = Extractor {
         links_regex: Regex::new(LINKFINDER_REGEX).unwrap(),
@@ -271,7 +307,7 @@ async fn request_robots_txt_without_proxy() -> Result<()> {
         handles,
     };
 
-    let resp = extractor.request_robots_txt().await?;
+    let resp = extractor.make_extract_request("/robots.txt").await?;
 
     assert!(matches!(resp.status(), &StatusCode::OK));
     println!("{}", resp);
@@ -304,7 +340,7 @@ async fn request_robots_txt_with_proxy() -> Result<()> {
         .handles(handles)
         .build()?;
 
-    let resp = extractor.request_robots_txt().await?;
+    let resp = extractor.make_extract_request("/robots.txt").await?;
 
     assert!(matches!(resp.status(), &StatusCode::OK));
     assert_eq!(resp.content_length(), 19);

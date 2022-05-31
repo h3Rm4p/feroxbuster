@@ -3,13 +3,16 @@ use fuzzyhash::FuzzyHash;
 
 /// Simple implementor of FeroxFilter; used to filter out responses based on the similarity of a
 /// Response body with a known response; specified using --filter-similar-to
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimilarityFilter {
-    /// Response's body to be used for comparison for similarity
-    pub text: String,
+    /// Hash of Response's body to be used during similarity comparison
+    pub hash: String,
 
     /// Percentage of similarity at which a page is determined to be a near-duplicate of another
     pub threshold: u32,
+
+    /// Url originally requested for the similarity filter
+    pub original_url: String,
 }
 
 /// implementation of FeroxFilter for SimilarityFilter
@@ -19,7 +22,7 @@ impl FeroxFilter for SimilarityFilter {
     fn should_filter_response(&self, response: &FeroxResponse) -> bool {
         let other = FuzzyHash::new(&response.text());
 
-        if let Ok(result) = FuzzyHash::compare(&self.text, &other.to_string()) {
+        if let Ok(result) = FuzzyHash::compare(&self.hash, &other.to_string()) {
             return result >= self.threshold;
         }
 

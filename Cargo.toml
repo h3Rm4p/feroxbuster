@@ -1,14 +1,20 @@
 [package]
 name = "feroxbuster"
-version = "2.4.1"
-authors = ["Ben 'epi' Risher <epibar052@gmail.com>"]
+version = "2.7.1"
+authors = ["Ben 'epi' Risher (@epi052)"]
 license = "MIT"
-edition = "2018"
+edition = "2021"
 homepage = "https://github.com/epi052/feroxbuster"
 repository = "https://github.com/epi052/feroxbuster"
 description = "A fast, simple, recursive content discovery tool."
 categories = ["command-line-utilities"]
-keywords = ["pentest", "enumeration", "url-bruteforce", "content-discovery", "web"]
+keywords = [
+    "pentest",
+    "enumeration",
+    "url-bruteforce",
+    "content-discovery",
+    "web",
+]
 exclude = [".github/*", "img/*", "check-coverage.sh"]
 build = "build.rs"
 
@@ -16,43 +22,46 @@ build = "build.rs"
 maintenance = { status = "actively-developed" }
 
 [build-dependencies]
-clap = "2.33"
-regex = "1"
-lazy_static = "1.4"
-dirs = "4.0"
+clap = { version = "3.1.18", features = ["wrap_help", "cargo"] }
+clap_complete = "3.1.4"
+regex = "1.5.5"
+lazy_static = "1.4.0"
+dirs = "4.0.0"
 
 [dependencies]
-futures = { version = "0.3"}
-tokio = { version = "1.15", features = ["full"] }
-tokio-util = {version = "0.6", features = ["codec"]}
-log = "0.4"
-env_logger = "0.9"
-reqwest = { version = "0.11", features = ["socks"] }
-url = { version = "2.2", features = ["serde"]}  # uses feature unification to add 'serde' to reqwest::Url
-serde_regex = "1.1"
-clap = "2.34"
-lazy_static = "1.4"
-toml = "0.5"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
-uuid = { version = "0.8", features = ["v4"] }
+scraper = "0.13.0"
+futures = "0.3.21"
+tokio = { version = "1.18.2", features = ["full"] }
+tokio-util = { version = "0.7.1", features = ["codec"] }
+log = "0.4.17"
+env_logger = "0.9.0"
+reqwest = { version = "0.11.10", features = ["socks"] }
+# uses feature unification to add 'serde' to reqwest::Url
+url = { version = "2.2.2", features = ["serde"] }
+serde_regex = "1.1.0"
+clap = { version = "3.1.18", features = ["wrap_help", "cargo"] }
+lazy_static = "1.4.0"
+toml = "0.5.9"
+serde = { version = "1.0.137", features = ["derive", "rc"] }
+serde_json = "1.0.81"
+uuid = { version = "1.0.0", features = ["v4"] }
 indicatif = "0.15"
-console = "0.15"
-openssl = { version = "0.10", features = ["vendored"] }
-dirs = "4.0"
-regex = "1"
-crossterm = "0.20"
-rlimit = "0.6"
-ctrlc = "3.2"
+console = "0.15.0"
+openssl = { version = "0.10.40", features = ["vendored"] }
+dirs = "4.0.0"
+regex = "1.5.5"
+crossterm = "0.23.2"
+rlimit = "0.8.3"
+ctrlc = "3.2.2"
 fuzzyhash = "0.2.1"
-anyhow = "1.0"
+anyhow = "1.0.57"
 leaky-bucket = "0.10.0"
 
 [dev-dependencies]
-tempfile = "3.1"
-httpmock = "0.6"
-assert_cmd = "2.0"
-predicates = "2.1"
+tempfile = "3.3.0"
+httpmock = "0.6.6"
+assert_cmd = "2.0.4"
+predicates = "2.1.1"
 
 [profile.release]
 lto = true
@@ -64,9 +73,29 @@ section = "utility"
 license-file = ["LICENSE", "4"]
 conf-files = ["/etc/feroxbuster/ferox-config.toml"]
 assets = [
-    ["target/release/feroxbuster", "/usr/bin/", "755"],
-    ["ferox-config.toml.example", "/etc/feroxbuster/ferox-config.toml", "644"],
-    ["shell_completions/feroxbuster.bash", "/usr/share/bash-completion/completions/feroxbuster.bash", "644"],
-    ["shell_completions/feroxbuster.fish", "/usr/share/fish/completions/feroxbuster.fish", "644"],
-    ["shell_completions/_feroxbuster", "/usr/share/zsh/vendor-completions/_feroxbuster", "644"],
+    [
+        "target/release/feroxbuster",
+        "/usr/bin/",
+        "755",
+    ],
+    [
+        "ferox-config.toml.example",
+        "/etc/feroxbuster/ferox-config.toml",
+        "644",
+    ],
+    [
+        "shell_completions/feroxbuster.bash",
+        "/usr/share/bash-completion/completions/feroxbuster.bash",
+        "644",
+    ],
+    [
+        "shell_completions/feroxbuster.fish",
+        "/usr/share/fish/completions/feroxbuster.fish",
+        "644",
+    ],
+    [
+        "shell_completions/_feroxbuster",
+        "/usr/share/zsh/vendor-completions/_feroxbuster",
+        "644",
+    ],
 ]

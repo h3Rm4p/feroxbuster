@@ -1,5 +1,8 @@
+#![deny(clippy::all)]
+#![allow(clippy::mutex_atomic)]
 use anyhow::Result;
 use reqwest::StatusCode;
+use std::collections::HashSet;
 use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -26,6 +29,7 @@ mod macros;
 mod url;
 mod response;
 mod message;
+mod nlp;
 
 /// Alias for tokio::sync::mpsc::UnboundedSender<Command>
 pub(crate) type CommandSender = UnboundedSender<Command>;
@@ -39,6 +43,9 @@ pub(crate) type Joiner = JoinHandle<Result<()>>;
 /// Generic mpsc::unbounded_channel type to tidy up some code
 pub(crate) type FeroxChannel<T> = (UnboundedSender<T>, UnboundedReceiver<T>);
 
+/// Wrapper around the results of performing any kind of extraction against a target web page
+pub(crate) type ExtractionResult = HashSet<String>;
+
 /// Version pulled from Cargo.toml at compile time
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -48,13 +55,29 @@ pub const DEFAULT_OPEN_FILE_LIMIT: u64 = 8192;
 /// Default value used to determine near-duplicate web pages (equivalent to 95%)
 pub const SIMILARITY_THRESHOLD: u32 = 95;
 
+/// Default set of extensions to Ignore when auto-collecting extensions during scans
+pub(crate) const DEFAULT_IGNORED_EXTENSIONS: [&str; 38] = [
+    "tif", "tiff", "ico", "cur", "bmp", "webp", "svg", "png", "jpg", "jpeg", "jfif", "gif", "avif",
+    "apng", "pjpeg", "pjp", "mov", "wav", "mpg", "mpeg", "mp3", "mp4", "m4a", "m4p", "m4v", "ogg",
+    "webm", "ogv", "oga", "flac", "aac", "3gp", "css", "zip", "xls", "xml", "gz", "tgz",
+];
+
 /// Default wordlist to use when `-w|--wordlist` isn't specified and not `wordlist` isn't set
 /// in a [ferox-config.toml](constant.DEFAULT_CONFIG_NAME.html) config file.
 ///
-/// defaults to kali's default install location:
+/// defaults to kali's default install location on linux:
 /// - `/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt`
+///
+/// and to the current directory on windows
+/// - `.\seclists\Discovery\Web-Content\raft-medium-directories.txt`
+#[cfg(not(target_os = "windows"))]
 pub const DEFAULT_WORDLIST: &str =
     "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt";
+#[cfg(target_os = "windows")]
+pub const DEFAULT_WORDLIST: &str =
+    ".\\SecLists\\Discovery\\Web-Content\\raft-medium-directories.txt";
+pub const SECONDARY_WORDLIST: &str =
+    "/usr/local/share/seclists/Discovery/Web-Content/raft-medium-directories.txt";
 
 /// Number of milliseconds to wait between polls of `PAUSE_SCAN` when user pauses a scan
 pub(crate) const SLEEP_DURATION: u64 = 500;
@@ -86,6 +109,9 @@ pub const DEFAULT_STATUS_CODES: [StatusCode; 10] = [
     StatusCode::METHOD_NOT_ALLOWED,
     StatusCode::INTERNAL_SERVER_ERROR,
 ];
+
+/// Default method for requests
+pub(crate) const DEFAULT_METHOD: &str = "GET";
 
 /// Default filename for config file settings
 ///

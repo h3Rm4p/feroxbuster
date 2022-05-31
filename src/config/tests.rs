@@ -30,7 +30,13 @@ fn setup_config_test() -> Configuration {
             resume_from = "/some/state/file"
             redirects = true
             insecure = true
+            collect_backups = true
+            collect_extensions = true
+            collect_words = true
             extensions = ["html", "php", "js"]
+            dont_collect = ["png", "gif", "jpg", "jpeg"]
+            methods = ["GET", "PUT", "DELETE"]
+            data = [31, 32, 33, 34]
             url_denylist = ["http://dont-scan.me", "https://also-not.me"]
             regex_denylist = ["/deny.*"]
             headers = {stuff = "things", mostuff = "mothings"}
@@ -43,6 +49,7 @@ fn setup_config_test() -> Configuration {
             json = true
             save_state = false
             depth = 1
+            force_recursion = true
             filter_size = [4120]
             filter_regex = ["^ignore me$"]
             filter_similar = ["https://somesite.com/soft404"]
@@ -89,14 +96,21 @@ fn default_configuration() {
     assert!(config.save_state);
     assert!(!config.stdin);
     assert!(!config.add_slash);
+    assert!(!config.force_recursion);
     assert!(!config.redirects);
     assert!(!config.extract_links);
     assert!(!config.insecure);
+    assert!(!config.collect_extensions);
+    assert!(!config.collect_backups);
+    assert!(!config.collect_words);
     assert!(config.regex_denylist.is_empty());
     assert_eq!(config.queries, Vec::new());
     assert_eq!(config.filter_size, Vec::<u64>::new());
     assert_eq!(config.extensions, Vec::<String>::new());
+    assert_eq!(config.methods, vec!["GET"]);
+    assert_eq!(config.data, Vec::<u8>::new());
     assert_eq!(config.url_denylist, Vec::<Url>::new());
+    assert_eq!(config.dont_collect, ignored_extensions());
     assert_eq!(config.filter_regex, Vec::<String>::new());
     assert_eq!(config.filter_similar, Vec::<String>::new());
     assert_eq!(config.filter_word_count, Vec::<usize>::new());
@@ -198,6 +212,13 @@ fn config_reads_silent() {
 
 #[test]
 /// parse the test config and see that the value parsed is correct
+fn config_reads_force_recursion() {
+    let config = setup_config_test();
+    assert!(config.force_recursion);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
 fn config_reads_quiet() {
     let config = setup_config_test();
     assert!(config.quiet);
@@ -289,9 +310,51 @@ fn config_reads_extract_links() {
 
 #[test]
 /// parse the test config and see that the value parsed is correct
+fn config_reads_collect_extensions() {
+    let config = setup_config_test();
+    assert!(config.collect_extensions);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_collect_backups() {
+    let config = setup_config_test();
+    assert!(config.collect_backups);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_collect_words() {
+    let config = setup_config_test();
+    assert!(config.collect_words);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
 fn config_reads_extensions() {
     let config = setup_config_test();
     assert_eq!(config.extensions, vec!["html", "php", "js"]);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_dont_collect() {
+    let config = setup_config_test();
+    assert_eq!(config.dont_collect, vec!["png", "gif", "jpg", "jpeg"]);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_methods() {
+    let config = setup_config_test();
+    assert_eq!(config.methods, vec!["GET", "PUT", "DELETE"]);
+}
+
+#[test]
+/// parse the test config and see that the value parsed is correct
+fn config_reads_data() {
+    let config = setup_config_test();
+    assert_eq!(config.data, vec![31, 32, 33, 34]);
 }
 
 #[test]

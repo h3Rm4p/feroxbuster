@@ -1,3 +1,4 @@
+use std::io::stdin;
 use std::{
     env::args,
     fs::{create_dir, remove_file, File},
@@ -20,15 +21,18 @@ use feroxbuster::{
     banner::{Banner, UPDATE_URL},
     config::{Configuration, OutputLevel},
     event_handlers::{
-        Command::{CreateBar, Exit, JoinTasks, LoadStats, ScanInitialUrls, UpdateWordlist},
+        Command::{
+            AddHandles, CreateBar, Exit, JoinTasks, LoadStats, ScanInitialUrls, UpdateWordlist,
+        },
         FiltersHandler, Handles, ScanHandler, StatsHandler, Tasks, TermInputHandler,
         TermOutHandler, SCAN_COMPLETE,
     },
     filters, heuristics, logger,
     progress::{PROGRESS_BAR, PROGRESS_PRINTER},
-    scan_manager::{self},
+    scan_manager::{self, ScanType},
     scanner,
     utils::{fmt_err, slugify_filename},
+    SECONDARY_WORDLIST,
 };
 #[cfg(not(target_os = "windows"))]
 use feroxbuster::{utils::set_open_file_limit, DEFAULT_OPEN_FILE_LIMIT};
@@ -48,19 +52,19 @@ fn get_unique_words_from_wordlist(path: &str) -> Result<Arc<Vec<String>>> {
 
     let reader = BufReader::new(file);
 
-    let mut words = Vec::new();
+    // this empty string ensures that we call Requester::request with the base url, i.e.
+    // `http://localhost/` instead of going straight into `http://localhost/WORD.EXT`.
+    // for vanilla scans, it doesn't matter all that much, but it can be a significant difference
+    // when `-e` is used, depending on the content at the base url.
+    let mut words = vec![String::from("")];
 
     for line in reader.lines() {
-        let result = match line {
-            Ok(read_line) => read_line,
-            Err(_) => continue,
-        };
-
-        if result.starts_with('#') || result.is_empty() {
-            continue;
-        }
-
-        words.push(result);
+        line.map(|result| {
+            if !result.starts_with('#') && !result.is_empty() {
+                words.push(result);
+            }
+        })
+        .ok();
     }
 
     log::trace!(
@@ -74,21 +78,12 @@ fn get_unique_words_from_wordlist(path: &str) -> Result<Arc<Vec<String>>> {
 /// Determine whether it's a single url scan or urls are coming from stdin, then scan as needed
 async fn scan(targets: Vec<String>, handles: Arc<Handles>) -> Result<()> {
     log::trace!("enter: scan({:?}, {:?})", targets, handles);
-    // cloning an Arc is cheap (it's basically a pointer into the heap)
-    // so that will allow for cheap/safe sharing of a single wordlist across multi-target scans
-    // as well as additional directories found as part of recursion
-
-    let words = get_unique_words_from_wordlist(&handles.config.wordlist)?;
-
-    if words.len() == 0 {
-        bail!("Did not find any words in {}", handles.config.wordlist);
-    }
 
     let scanned_urls = handles.ferox_scans()?;
 
-    handles.send_scan_command(UpdateWordlist(words.clone()))?;
+    handles.send_scan_command(UpdateWordlist(handles.wordlist.clone()))?;
 
-    scanner::initialize(words.len(), handles.clone()).await?;
+    scanner::initialize(handles.wordlist.len(), handles.clone()).await?;
 
     // at this point, the stat thread's progress bar can be created; things that needed to happen
     // first:
@@ -107,7 +102,7 @@ async fn scan(targets: Vec<String>, handles: Arc<Handles>) -> Result<()> {
     if handles.config.resumed {
         // display what has already been completed
         scanned_urls.print_known_responses();
-        scanned_urls.print_completed_bars(words.len())?;
+        scanned_urls.print_completed_bars(handles.wordlist.len())?;
     }
 
     log::debug!("sending {:?} to be scanned as initial targets", targets);
@@ -142,8 +137,8 @@ async fn get_targets(handles: Arc<Handles>) -> Result<Vec<String>> {
             for scan in scans.iter() {
                 // ferox_scans gets deserialized scans added to it at program start if --resume-from
                 // is used, so scans that aren't marked complete still need to be scanned
-                if scan.is_complete() {
-                    // this one's already done, ignore it
+                if scan.is_complete() || matches!(scan.scan_type, ScanType::File) {
+                    // this one's already done, or it's not a directory, ignore it
                     continue;
                 }
 
@@ -155,7 +150,7 @@ async fn get_targets(handles: Arc<Handles>) -> Result<Vec<String>> {
     }
 
     // remove footgun that arises if a --dont-scan value matches on a base url
-    for target in &targets {
+    for target in targets.iter_mut() {
         for denier in &handles.config.regex_denylist {
             if denier.is_match(target) {
                 bail!(
@@ -173,6 +168,11 @@ async fn get_targets(handles: Arc<Handles>) -> Result<Vec<String>> {
                     target
                 );
             }
+        }
+
+        if !target.starts_with("http") && !target.starts_with("https") {
+            // --url hackerone.com
+            *target = format!("https://{}", target);
         }
     }
 
@@ -197,6 +197,30 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         PROGRESS_BAR.join().unwrap();
     });
 
+    // cloning an Arc is cheap (it's basically a pointer into the heap)
+    // so that will allow for cheap/safe sharing of a single wordlist across multi-target scans
+    // as well as additional directories found as part of recursion
+    let words = match get_unique_words_from_wordlist(&config.wordlist) {
+        Ok(w) => w,
+        Err(err) => {
+            let secondary = Path::new(SECONDARY_WORDLIST);
+
+            if secondary.exists() {
+                eprintln!("Found wordlist in secondary location");
+                get_unique_words_from_wordlist(SECONDARY_WORDLIST)?
+            } else {
+                return Err(err);
+            }
+        }
+    };
+
+    if words.len() <= 1 {
+        // the check is now <= 1 due to the initial empty string added in 2.6.0
+        // 1 -> empty wordlist
+        // 0 -> error
+        bail!("Did not find any words in {}", config.wordlist);
+    }
+
     // spawn all event handlers, expect back a JoinHandle and a *Handle to the specific event
     let (stats_task, stats_handle) = StatsHandler::initialize(config.clone());
     let (filters_task, filters_handle) = FiltersHandler::initialize();
@@ -209,11 +233,13 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         filters_handle,
         out_handle,
         config.clone(),
+        words,
     ));
 
     let (scan_task, scan_handle) = ScanHandler::initialize(handles.clone());
 
     handles.set_scan_handle(scan_handle); // must be done after Handles initialization
+    handles.output.send(AddHandles(handles.clone()))?;
 
     filters::initialize(handles.clone()).await?; // send user-supplied filters to the handler
 
@@ -241,7 +267,7 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         let from_here = config.resume_from.clone();
 
         // populate FeroxScans object with previously seen scans
-        scanned_urls.add_serialized_scans(&from_here)?;
+        scanned_urls.add_serialized_scans(&from_here, handles.clone())?;
 
         // populate Stats object with previously known statistics
         handles.stats.send(LoadStats(from_here))?;
@@ -498,9 +524,39 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
     {
-        let future = wrapped_main(config);
+        let future = wrapped_main(config.clone());
         if let Err(e) = runtime.block_on(future) {
             eprintln!("{}", e);
+
+            // the code below is to facilitate testing tests/test_banner entries. Since it's an
+            // integration test, normal test detection (cfg!(test), etc...) won't work. So, in
+            // the tests themselves, we pass
+            // `--wordlist /definitely/doesnt/exist/0cd7fed0-47f4-4b18-a1b0-ac39708c1676`
+            // and look for that here to print the banner.
+            //
+            // this change became a necessity once we moved wordlist parsing out of `scan` and into
+            // `wrapped_main`.
+            if e.to_string()
+                .contains("/definitely/doesnt/exist/0cd7fed0-47f4-4b18-a1b0-ac39708c1676")
+            {
+                // support the handful of tests that use `--stdin`
+                let targets: Vec<_> = if config.stdin {
+                    stdin().lock().lines().map(|tgt| tgt.unwrap()).collect()
+                } else {
+                    vec!["http://localhost".to_string()]
+                };
+
+                // print the banner to stderr
+                let std_stderr = stderr(); // std::io::stderr
+                let banner = Banner::new(&targets, &config);
+                if !config.quiet && !config.silent {
+                    banner.print_to(std_stderr, config).unwrap();
+                }
+            }
+
+            // if we've encountered an error before clean_up can be called (i.e. a wordlist error)
+            // we need to at least spin-down the progress bar
+            PROGRESS_PRINTER.finish();
         };
     }
 

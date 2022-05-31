@@ -1,12 +1,14 @@
 use std::{
     cmp::max,
-    sync::{atomic::Ordering, Arc, Mutex},
+    collections::HashSet,
+    sync::{self, atomic::Ordering, Arc, Mutex},
 };
 
 use anyhow::Result;
+use lazy_static::lazy_static;
 use leaky_bucket::LeakyBucket;
 use tokio::{
-    sync::{oneshot, RwLock},
+    sync::RwLock,
     time::{sleep, Duration},
 };
 
@@ -14,21 +16,25 @@ use crate::{
     atomic_load, atomic_store,
     config::RequesterPolicy,
     event_handlers::{
-        Command::{self, AddError, SubtractFromUsizeField},
+        Command::{AddError, SubtractFromUsizeField},
         Handles,
     },
-    extractor::{ExtractionTarget::ResponseBody, ExtractorBuilder},
+    extractor::{ExtractionTarget, ExtractorBuilder},
+    nlp::{Document, TfIdf},
     response::FeroxResponse,
     scan_manager::{FeroxScan, ScanStatus},
     statistics::{StatError::Other, StatField::TotalExpected},
     url::FeroxUrl,
-    utils::logged_request,
+    utils::{logged_request, send_try_recursion_command, should_deny_url},
     HIGH_ERROR_RATIO,
 };
 
 use super::{policy_data::PolicyData, FeroxScanner, PolicyTrigger};
-use crate::utils::should_deny_url;
-use std::collections::HashSet;
+
+lazy_static! {
+    /// make sure to note that this is a std rwlock and not tokio
+    pub(crate) static ref TF_IDF: Arc<sync::RwLock<TfIdf>> = Arc::new(sync::RwLock::new(TfIdf::new()));
+}
 
 /// Makes multiple requests based on the presence of extensions
 pub(super) struct Requester {
@@ -118,13 +124,12 @@ impl Requester {
 
     /// limit the number of requests per second
     pub async fn limit(&self) -> Result<()> {
-        self.rate_limiter
-            .read()
-            .await
-            .as_ref()
-            .unwrap()
-            .acquire_one()
-            .await?;
+        let guard = self.rate_limiter.read().await;
+
+        if guard.is_some() {
+            guard.as_ref().unwrap().acquire_one().await?;
+        }
+
         Ok(())
     }
 
@@ -303,116 +308,176 @@ impl Requester {
     pub async fn request(&self, word: &str) -> Result<()> {
         log::trace!("enter: request({})", word);
 
-        let urls =
-            FeroxUrl::from_string(&self.target_url, self.handles.clone()).formatted_urls(word)?;
+        let collected = self.handles.collected_extensions();
+
+        let urls = FeroxUrl::from_string(&self.target_url, self.handles.clone())
+            .formatted_urls(word, collected)?;
 
         let should_test_deny = !self.handles.config.url_denylist.is_empty()
             || !self.handles.config.regex_denylist.is_empty();
 
         for url in urls {
-            // auto_tune is true, or rate_limit was set (mutually exclusive to user)
-            // and a rate_limiter has been created
-            // short-circuiting the lock access behind the first boolean check
-            let should_tune = self.handles.config.auto_tune || self.handles.config.rate_limit > 0;
-            let should_limit = should_tune && self.rate_limiter.read().await.is_some();
+            for method in self.handles.config.methods.iter() {
+                // auto_tune is true, or rate_limit was set (mutually exclusive to user)
+                // and a rate_limiter has been created
+                // short-circuiting the lock access behind the first boolean check
+                let should_tune =
+                    self.handles.config.auto_tune || self.handles.config.rate_limit > 0;
+                let should_limit = should_tune && self.rate_limiter.read().await.is_some();
 
-            if should_limit {
-                // found a rate limiter, limit that junk!
-                if let Err(e) = self.limit().await {
-                    log::warn!("Could not rate limit scan: {}", e);
-                    self.handles.stats.send(AddError(Other)).unwrap_or_default();
-                }
-            }
-
-            if should_test_deny && should_deny_url(&url, self.handles.clone())? {
-                // can't allow a denied url to be requested
-                continue;
-            }
-
-            let response = logged_request(&url, self.handles.clone()).await?;
-
-            if (should_tune || self.handles.config.auto_bail)
-                && !atomic_load!(self.policy_data.cooling_down, Ordering::SeqCst)
-            {
-                // only check for policy enforcement when the trigger isn't on cooldown and tuning
-                // or bailing is in place (should_tune used here because when auto-tune is on, we'll
-                // reach this without a rate_limiter in place)
-                match self.policy_data.policy {
-                    RequesterPolicy::AutoTune => {
-                        if let Some(trigger) = self.should_enforce_policy() {
-                            self.tune(trigger).await?;
-                        }
+                if should_limit {
+                    // found a rate limiter, limit that junk!
+                    if let Err(e) = self.limit().await {
+                        log::warn!("Could not rate limit scan: {}", e);
+                        self.handles.stats.send(AddError(Other)).unwrap_or_default();
                     }
-                    RequesterPolicy::AutoBail => {
-                        if let Some(trigger) = self.should_enforce_policy() {
-                            self.bail(trigger).await?;
-                        }
-                    }
-                    RequesterPolicy::Default => {}
                 }
-            }
 
-            // response came back without error, convert it to FeroxResponse
-            let ferox_response = FeroxResponse::from(
-                response,
-                &self.target_url,
-                true,
-                self.handles.config.output_level,
-            )
-            .await;
+                if should_test_deny && should_deny_url(&url, self.handles.clone())? {
+                    // can't allow a denied url to be requested
+                    continue;
+                }
 
-            // do recursion if appropriate
-            if !self.handles.config.no_recursion {
-                self.handles
-                    .send_scan_command(Command::TryRecursion(Box::new(ferox_response.clone())))?;
-                let (tx, rx) = oneshot::channel::<bool>();
-                self.handles.send_scan_command(Command::Sync(tx))?;
-                rx.await?;
-            }
+                let data = if self.handles.config.data.is_empty() {
+                    None
+                } else {
+                    Some(self.handles.config.data.as_slice())
+                };
 
-            // purposefully doing recursion before filtering. the thought process is that
-            // even though this particular url is filtered, subsequent urls may not
-            if self
-                .handles
-                .filters
-                .data
-                .should_filter_response(&ferox_response, self.handles.stats.tx.clone())
-            {
-                continue;
-            }
+                let response =
+                    logged_request(&url, method.as_str(), data, self.handles.clone()).await?;
 
-            if self.handles.config.extract_links && !ferox_response.status().is_redirection() {
-                let extractor = ExtractorBuilder::default()
-                    .target(ResponseBody)
-                    .response(&ferox_response)
-                    .handles(self.handles.clone())
-                    .build()?;
-
-                let new_links: HashSet<_>;
-                let extracted = extractor.extract().await?;
-
+                if (should_tune || self.handles.config.auto_bail)
+                    && !atomic_load!(self.policy_data.cooling_down, Ordering::SeqCst)
                 {
-                    // gain and quickly drop the read lock on seen_links, using it while unlocked
-                    // to determine if there are any new links to process
-                    let read_links = self.seen_links.read().await;
-                    new_links = extracted.difference(&read_links).cloned().collect();
-                }
-
-                if !new_links.is_empty() {
-                    // using is_empty instead of direct iteration to acquire the write lock behind
-                    // some kind of less expensive gate (and not in a loop, obv)
-                    let mut write_links = self.seen_links.write().await;
-                    for new_link in &new_links {
-                        write_links.insert(new_link.to_owned());
+                    // only check for policy enforcement when the trigger isn't on cooldown and tuning
+                    // or bailing is in place (should_tune used here because when auto-tune is on, we'll
+                    // reach this without a rate_limiter in place)
+                    match self.policy_data.policy {
+                        RequesterPolicy::AutoTune => {
+                            if let Some(trigger) = self.should_enforce_policy() {
+                                self.tune(trigger).await?;
+                            }
+                        }
+                        RequesterPolicy::AutoBail => {
+                            if let Some(trigger) = self.should_enforce_policy() {
+                                self.bail(trigger).await?;
+                            }
+                        }
+                        RequesterPolicy::Default => {}
                     }
                 }
 
-                extractor.request_links(new_links).await?;
-            }
+                // response came back without error, convert it to FeroxResponse
+                let mut ferox_response = FeroxResponse::from(
+                    response,
+                    &self.target_url,
+                    method,
+                    self.handles.config.output_level,
+                )
+                .await;
 
-            // everything else should be reported
-            if let Err(e) = ferox_response.send_report(self.handles.output.tx.clone()) {
-                log::warn!("Could not send FeroxResponse to output handler: {}", e);
+                // do recursion if appropriate
+                if !self.handles.config.no_recursion && !self.handles.config.force_recursion {
+                    // to support --force-recursion, we want to limit recursive calls to only
+                    // 'found' assets. That means we need to either gate or delay the call.
+                    //
+                    // this branch will retain the 'old' behavior by checking that
+                    // --force-recursion isn't turned on
+                    send_try_recursion_command(self.handles.clone(), ferox_response.clone())
+                        .await?;
+                }
+
+                // purposefully doing recursion before filtering. the thought process is that
+                // even though this particular url is filtered, subsequent urls may not
+                if self
+                    .handles
+                    .filters
+                    .data
+                    .should_filter_response(&ferox_response, self.handles.stats.tx.clone())
+                {
+                    continue;
+                }
+
+                if !self.handles.config.no_recursion && self.handles.config.force_recursion {
+                    // in this branch, we're saying that both recursion AND force recursion
+                    // are turned on. It comes after should_filter_response, so those cases
+                    // are handled. Now we need to account for -s/-C options.
+
+                    if self.handles.config.filter_status.is_empty() {
+                        // -C wasn't used, so -s is the only 'filter' left to account for
+                        if self
+                            .handles
+                            .config
+                            .status_codes
+                            .contains(&ferox_response.status().as_u16())
+                        {
+                            send_try_recursion_command(
+                                self.handles.clone(),
+                                ferox_response.clone(),
+                            )
+                            .await?;
+                        }
+                    } else {
+                        // -C was used, that means the filters above would have removed
+                        // those responses, and anything else should be let through
+                        send_try_recursion_command(self.handles.clone(), ferox_response.clone())
+                            .await?;
+                    }
+                }
+
+                if self.handles.config.collect_extensions {
+                    ferox_response.parse_extension(self.handles.clone())?;
+                }
+
+                if self.handles.config.collect_words {
+                    if let Ok(mut guard) = TF_IDF.write() {
+                        let doc = Document::from_html(ferox_response.text());
+                        guard.add_document(doc);
+                        if guard.num_documents() % 12 == 0
+                            || (guard.num_documents() < 5 && guard.num_documents() % 2 == 0)
+                        {
+                            guard.calculate_tf_idf_scores();
+                        }
+                    }
+                }
+
+                if self.handles.config.extract_links {
+                    let mut extractor = ExtractorBuilder::default()
+                        .target(ExtractionTarget::ResponseBody)
+                        .response(&ferox_response)
+                        .handles(self.handles.clone())
+                        .build()?;
+
+                    let new_links: HashSet<_>;
+
+                    let result = extractor.extract().await?;
+
+                    {
+                        // gain and quickly drop the read lock on seen_links, using it while unlocked
+                        // to determine if there are any new links to process
+                        let read_links = self.seen_links.read().await;
+                        new_links = result.difference(&read_links).cloned().collect();
+                    }
+
+                    if !new_links.is_empty() {
+                        // using is_empty instead of direct iteration to acquire the write lock behind
+                        // some kind of less expensive gate (and not in a loop, obv)
+                        let mut write_links = self.seen_links.write().await;
+                        for new_link in &new_links {
+                            write_links.insert(new_link.to_owned());
+                        }
+                    }
+
+                    if !new_links.is_empty() {
+                        extractor.request_links(new_links).await?;
+                    }
+                }
+
+                // everything else should be reported
+                if let Err(e) = ferox_response.send_report(self.handles.output.tx.clone()) {
+                    log::warn!("Could not send FeroxResponse to output handler: {}", e);
+                }
             }
         }
 
@@ -430,6 +495,7 @@ mod tests {
     use crate::{
         config::Configuration,
         config::OutputLevel,
+        event_handlers::Command::AddStatus,
         event_handlers::{FiltersHandler, ScanHandler, StatsHandler, Tasks, TermOutHandler},
         filters,
         scan_manager::{ScanOrder, ScanType},
@@ -447,12 +513,14 @@ mod tests {
         let (filters_task, filters_handle) = FiltersHandler::initialize();
         let (out_task, out_handle) =
             TermOutHandler::initialize(configuration.clone(), stats_handle.tx.clone());
+        let wordlist = Arc::new(vec![String::from("this_is_a_test")]);
 
         let handles = Arc::new(Handles::new(
             stats_handle,
             filters_handle,
             out_handle,
             configuration.clone(),
+            wordlist,
         ));
 
         let (scan_task, scan_handle) = ScanHandler::initialize(handles.clone());
@@ -468,10 +536,7 @@ mod tests {
     /// helper to stay DRY
     async fn increment_errors(handles: Arc<Handles>, scan: Arc<FeroxScan>, num_errors: usize) {
         for _ in 0..num_errors {
-            handles
-                .stats
-                .send(Command::AddError(StatError::Other))
-                .unwrap();
+            handles.stats.send(AddError(StatError::Other)).unwrap();
             scan.add_error();
         }
 
@@ -508,7 +573,7 @@ mod tests {
         code: StatusCode,
     ) {
         for _ in 0..num_codes {
-            handles.stats.send(Command::AddStatus(code)).unwrap();
+            handles.stats.send(AddStatus(code)).unwrap();
             if code == StatusCode::FORBIDDEN {
                 scan.add_403();
             } else {
@@ -576,10 +641,10 @@ mod tests {
 
         let requester = Requester {
             handles,
+            target_url: "http://localhost".to_string(),
             seen_links: RwLock::new(HashSet::<String>::new()),
             tuning_lock: Mutex::new(0),
             ferox_scan: Arc::new(FeroxScan::default()),
-            target_url: "http://localhost".to_string(),
             rate_limiter: RwLock::new(None),
             policy_data: Default::default(),
         };

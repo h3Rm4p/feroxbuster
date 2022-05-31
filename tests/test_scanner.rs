@@ -3,6 +3,8 @@ use assert_cmd::prelude::*;
 use httpmock::Method::GET;
 use httpmock::MockServer;
 use predicates::prelude::*;
+use std::thread::sleep;
+use std::time::Duration;
 use std::{process::Command, time};
 use utils::{setup_tmp_directory, teardown_tmp_directory};
 
@@ -89,9 +91,9 @@ fn scanner_recursive_request_scan() -> Result<(), Box<dyn std::error::Error>> {
             .and(predicate::str::is_match("200.*js/dev/file.js").unwrap()),
     );
 
-    assert_eq!(js_mock.hits(), 1);
-    assert_eq!(js_prod_mock.hits(), 1);
-    assert_eq!(js_dev_mock.hits(), 1);
+    assert_eq!(js_mock.hits(), 2);
+    assert_eq!(js_prod_mock.hits(), 2);
+    assert_eq!(js_dev_mock.hits(), 2);
     assert_eq!(js_dev_file_mock.hits(), 1);
 
     teardown_tmp_directory(tmp_dir);
@@ -153,9 +155,9 @@ fn scanner_recursive_request_scan_using_only_success_responses(
             .and(predicate::str::is_match("200.*js/dev/file.js").unwrap()),
     );
 
-    assert_eq!(js_mock.hits(), 1);
-    assert_eq!(js_prod_mock.hits(), 1);
-    assert_eq!(js_dev_mock.hits(), 1);
+    assert_eq!(js_mock.hits(), 3);
+    assert_eq!(js_prod_mock.hits(), 3);
+    assert_eq!(js_dev_mock.hits(), 3);
     assert_eq!(js_dev_file_mock.hits(), 1);
 
     teardown_tmp_directory(tmp_dir);
@@ -363,7 +365,7 @@ fn scanner_single_request_replayed_to_proxy() -> Result<(), Box<dyn std::error::
         .arg("--wordlist")
         .arg(file.as_os_str())
         .arg("--replay-proxy")
-        .arg(format!("http://{}", proxy.address().to_string()))
+        .arg(format!("http://{}", proxy.address()))
         .arg("--replay-codes")
         .arg("200")
         .unwrap();
@@ -596,7 +598,7 @@ fn scanner_recursion_works_with_403_directories() {
 
     assert_eq!(mock.hits(), 1);
     assert_eq!(found_anyway.hits(), 1);
-    assert_eq!(forbidden_dir.hits(), 1);
+    assert_eq!(forbidden_dir.hits(), 3);
 
     teardown_tmp_directory(tmp_dir);
 }
@@ -637,4 +639,275 @@ fn rate_limit_enforced_when_specified() {
     assert!(now.elapsed() > lower_bound);
 
     teardown_tmp_directory(tmp_dir);
+}
+
+#[test]
+/// ensure that auto-discovered extensions are tracked in statistics and bar lengths are updated
+fn add_discovered_extension_updates_bars_and_stats() {
+    let srv = MockServer::start();
+    let (tmp_dir, file) = setup_tmp_directory(
+        &["LICENSE".to_string(), "stuff.php".to_string()],
+        "wordlist",
+    )
+    .unwrap();
+
+    srv.mock(|when, then| {
+        when.method(GET).path("/stuff.php");
+        then.status(200).body("cool... coolcoolcool");
+    });
+
+    let file_path = tmp_dir.path().join("debug-file.txt");
+
+    assert!(!file_path.exists());
+
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg(srv.url("/"))
+        .arg("--wordlist")
+        .arg(file.as_os_str())
+        .arg("--extract-links")
+        .arg("--collect-extensions")
+        .arg("-vvvv")
+        .arg("--debug-log")
+        .arg(file_path.as_os_str())
+        .unwrap()
+        .assert()
+        .success();
+
+    let contents = std::fs::read_to_string(file_path).unwrap();
+    println!("{}", contents);
+    assert!(contents.contains("discovered new extension: php"));
+    assert!(contents.contains("extensions_collected: 1"));
+    assert!(contents.contains("expected_per_scan: 6"));
+}
+
+#[test]
+/// send a request to a 200 file, expect pre-configured backup collection rules to be applied
+/// and then requested
+fn collect_backups_makes_appropriate_requests() {
+    let srv = MockServer::start();
+    let (tmp_dir, file) = setup_tmp_directory(&["LICENSE.txt".to_string()], "wordlist").unwrap();
+
+    let valid_paths = vec![
+        "/LICENSE.txt",
+        "/LICENSE.txt~",
+        "/LICENSE.txt.bak",
+        "/LICENSE.txt.bak2",
+        "/LICENSE.txt.old",
+        "/LICENSE.txt.1",
+        "/LICENSE.bak",
+        "/.LICENSE.txt.swp",
+    ];
+
+    let valid_mocks: Vec<_> = valid_paths
+        .iter()
+        .map(|&p| {
+            srv.mock(|when, then| {
+                when.method(GET).path(p);
+                then.status(200).body("this is a valid test");
+            })
+        })
+        .collect();
+
+    let invalid_paths: Vec<_> = vec![
+        "/LICENSE.txt~~",
+        "/LICENSE.txt.bak.bak",
+        "/LICENSE.txt.bak2.bak2",
+        "/LICENSE.txt.old.old",
+        "/LICENSE.txt.1.1",
+        "/..LICENSE.txt.swp.swp",
+    ];
+
+    let invalid_mocks: Vec<_> = invalid_paths
+        .iter()
+        .map(|&p| {
+            srv.mock(|when, then| {
+                when.method(GET).path(p);
+                then.status(200).body("this is an invalid test");
+            })
+        })
+        .collect();
+
+    let cmd = Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg(srv.url("/"))
+        .arg("--collect-backups")
+        .arg("--wordlist")
+        .arg(file.as_os_str())
+        .unwrap();
+
+    cmd.assert().success().stdout(
+        predicate::str::contains("/LICENSE.txt")
+            .and(predicate::str::contains("/LICENSE.txt~"))
+            .and(predicate::str::contains("/LICENSE.txt.bak"))
+            .and(predicate::str::contains("/LICENSE.txt.bak2"))
+            .and(predicate::str::contains("/LICENSE.txt.old"))
+            .and(predicate::str::contains("/LICENSE.txt.1"))
+            .and(predicate::str::contains("/LICENSE.bak"))
+            .and(predicate::str::contains("/.LICENSE.txt.swp")),
+    );
+
+    for valid_mock in valid_mocks {
+        assert_eq!(valid_mock.hits(), 1);
+    }
+
+    for invalid_mock in invalid_mocks {
+        assert_eq!(invalid_mock.hits(), 0);
+    }
+
+    teardown_tmp_directory(tmp_dir);
+}
+
+#[test]
+/// send a request to 4 200 files, expect non-zero tf-idf rated words to be requested as well
+fn collect_words_makes_appropriate_requests() {
+    let srv = MockServer::start();
+
+    let wordlist: Vec<_> = [
+        "doc1", "doc2", "doc3", "doc4", "blah", "blah2", "blah3", "blah4",
+    ]
+    .iter()
+    .map(|w| w.to_string())
+    .collect();
+
+    let (tmp_dir, file) = setup_tmp_directory(&wordlist, "wordlist").unwrap();
+
+    srv.mock(|when, then| {
+        when.method(GET).path("/doc1");
+        then.status(200)
+            .body("Air quality in the sunny island improved gradually throughout Wednesday.");
+    });
+    srv.mock(|when, then| {
+        when.method(GET).path("/doc2");
+        then.status(200).body(
+            "Air quality in Singapore on Wednesday continued to get worse as haze hit the island.",
+        );
+    });
+    srv.mock(|when, then| {
+        when.method(GET).path("/doc3");
+        then.status(200).body("The air quality in Singapore is monitored through a network of air monitoring stations located in different parts of the island");
+    });
+    srv.mock(|when, then| {
+        when.method(GET).path("/doc4");
+        then.status(200)
+            .body("The air quality in Singapore got worse on Wednesday.");
+    });
+
+    let valid_paths = vec![
+        "/gradually",
+        "/network",
+        "/hit",
+        "/located",
+        "/continued",
+        "/island",
+        "/worse",
+        "/monitored",
+        "/monitoring",
+        "/haze",
+        "/different",
+        "/stations",
+        "/sunny",
+        "/singapore",
+        "/improved",
+        "/parts",
+        "/wednesday",
+    ];
+
+    let valid_mocks: Vec<_> = valid_paths
+        .iter()
+        .map(|&p| {
+            srv.mock(|when, then| {
+                when.method(GET).path(p);
+                then.status(200);
+            })
+        })
+        .collect();
+
+    let cmd = Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg(srv.url("/"))
+        .arg("-vv")
+        .arg("--collect-words")
+        .arg("-t")
+        .arg("1")
+        .arg("--wordlist")
+        .arg(file.as_os_str())
+        .unwrap();
+
+    cmd.assert().success().stdout(
+        predicate::str::contains("/doc1")
+            .and(predicate::str::contains("/doc2"))
+            .and(predicate::str::contains("/doc3"))
+            .and(predicate::str::contains("/doc4")),
+    );
+
+    sleep(Duration::new(2, 0));
+
+    for valid_mock in valid_mocks {
+        assert_eq!(valid_mock.hits(), 1);
+    }
+
+    teardown_tmp_directory(tmp_dir);
+}
+
+#[test]
+/// send a request to an endpoint that has abnormal redirect logic, ala fast-api
+fn scanner_forced_recursion_ignores_normal_redirect_logic() -> Result<(), Box<dyn std::error::Error>>
+{
+    let srv = MockServer::start();
+    let (tmp_dir, file) = setup_tmp_directory(&["LICENSE".to_string()], "wordlist")?;
+
+    let mock1 = srv.mock(|when, then| {
+        when.method(GET).path("/LICENSE");
+        then.status(301)
+            .body("this is a test")
+            .header("Location", &srv.url("/LICENSE"));
+    });
+
+    let mock2 = srv.mock(|when, then| {
+        when.method(GET).path("/LICENSE/LICENSE");
+        then.status(404);
+    });
+
+    let mock3 = srv.mock(|when, then| {
+        when.method(GET).path("/LICENSE/LICENSE/LICENSE");
+        then.status(404);
+    });
+
+    let mock4 = srv.mock(|when, then| {
+        when.method(GET).path("/LICENSE/LICENSE/LICENSE/LICENSE");
+        then.status(404);
+    });
+
+    let outfile = tmp_dir.path().join("output");
+
+    Command::cargo_bin("feroxbuster")
+        .unwrap()
+        .arg("--url")
+        .arg(srv.url("/"))
+        .arg("--wordlist")
+        .arg(file.as_os_str())
+        .arg("--force-recursion")
+        .arg("-o")
+        .arg(outfile.as_os_str())
+        .unwrap();
+
+    let contents = std::fs::read_to_string(outfile)?;
+    println!("{}", contents);
+
+    assert!(contents.contains("/LICENSE"));
+    assert!(contents.contains("301"));
+    assert!(contents.contains("14"));
+
+    assert_eq!(mock1.hits(), 2);
+    assert_eq!(mock2.hits(), 1);
+    assert_eq!(mock3.hits(), 0);
+    assert_eq!(mock4.hits(), 0);
+
+    teardown_tmp_directory(tmp_dir);
+
+    Ok(())
 }
